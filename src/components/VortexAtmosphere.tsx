@@ -321,10 +321,7 @@ export function VortexAtmosphere({ vortexRef }: VortexAtmosphereProps) {
           />
         </div>
       </div>
-      <canvas
-        ref={canvasRef}
-        className="vortex-blend-screen absolute inset-0 h-full w-full"
-      />
+      <canvas ref={canvasRef} className="vortex-blend-screen absolute inset-0 h-full w-full" />
     </div>
   );
 }

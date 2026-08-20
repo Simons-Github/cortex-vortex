@@ -28,7 +28,7 @@ export const Route = createFileRoute("/dashboard")({
 });
 
 function Dashboard() {
-  const { getMastery, isLoading, isPureDemo, masteryByTopic } = useMasteryStore();
+  const { getMastery, isLoading, isPureDemo } = useMasteryStore();
   const vortexRef = useRef<HTMLDivElement>(null);
   const decayTextRef = useRef<HTMLElement>(null);
   const stats = useMemo(() => {
@@ -44,7 +44,7 @@ function Dashboard() {
       };
     }
     return liveDashboardStats(topics, getMastery);
-  }, [getMastery, isPureDemo, masteryByTopic]);
+  }, [getMastery, isPureDemo]);
   const nextTopicId = stats.nextTopicId;
 
   return (

@@ -311,9 +311,15 @@ export function VortexParticles({ decay, spawnOriginRef, vortexRef }: VortexPart
         let th = Math.atan2(sy, sx);
 
         const inflow =
-          (0.0016 + config.accel * 0.055) * p.speedMul * config.speedScale * (0.45 + 0.7 / (sr + 0.28));
+          (0.0016 + config.accel * 0.055) *
+          p.speedMul *
+          config.speedScale *
+          (0.45 + 0.7 / (sr + 0.28));
         const spin =
-          (0.011 + config.accel * 0.12) * p.speedMul * config.speedScale * (0.5 + 0.85 / (sr + 0.18));
+          (0.011 + config.accel * 0.12) *
+          p.speedMul *
+          config.speedScale *
+          (0.5 + 0.85 / (sr + 0.18));
 
         sr -= inflow;
         th += spin;

@@ -30,10 +30,7 @@ export function fieldOmega(u: number, speedMul: number): number {
 }
 
 /** NDC pointer relative to the hero card — identical for WebGL and 2D halo. */
-export function pointerNdcFromEvent(
-  event: PointerEvent,
-  rect: DOMRect,
-): { x: number; y: number } {
+export function pointerNdcFromEvent(event: PointerEvent, rect: DOMRect): { x: number; y: number } {
   if (rect.width === 0 || rect.height === 0) return { x: 0, y: 0 };
   const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   const y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
