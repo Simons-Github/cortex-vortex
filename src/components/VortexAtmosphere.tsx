@@ -60,12 +60,14 @@ export function VortexAtmosphere({ vortexRef }: VortexAtmosphereProps) {
   const motesRef = useRef<Mote[]>([]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
+    const canvasEl = canvasRef.current;
     const haze = hazeRef.current;
-    if (!canvas) return;
+    const ctx2d = canvasEl?.getContext("2d");
+    if (!canvasEl || !ctx2d) return;
 
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    // Fresh non-union bindings so nested rAF closures keep definite types.
+    const canvas: HTMLCanvasElement = canvasEl;
+    const ctx: CanvasRenderingContext2D = ctx2d;
 
     const motes = motesRef.current;
     let rafId = 0;
