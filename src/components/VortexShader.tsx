@@ -700,11 +700,11 @@ vec3 oklabToLinear(vec3 lab) {
   );
 }
 
-float fbm2(vec2 p, float octaves) {
+float fbm3(vec3 p, float octaves) {
   float a = 0.5;
   float s = 0.0;
   float n = 0.0;
-  vec3 q = vec3(p, 0.19);
+  vec3 q = p;
   for (int i = 0; i < 5; i++) {
     if (float(i) >= octaves) break;
     s += a * snoise(q);
@@ -739,10 +739,11 @@ void main() {
   float armSharp = mix(1.45, 2.45, 0.5 + 0.5 * armNoise);
   float armCore = pow(clamp(0.5 + 0.5 * cos(armPhase), 0.0, 1.0), armSharp);
 
-  // Scroll along the spiral (log-radius), never ω(r)·t.
-  vec2 filUV = vec2(spiral * 0.52, logR * 4.15 - uTime * 0.085);
-  float n1 = fbm2(filUV, uOctaves);
-  float n2 = fbm2(filUV * 2.18 + vec2(1.6, -uTime * 0.04), max(uOctaves - 1.0, 1.0));
+  // Cylinder in noise space so the atan 2π cut on -X does not seam the filaments.
+  // Radius 0.52 matches the old angular frequency (d(noise)/dθ); logR stays the axis.
+  vec3 filP = vec3(cos(spiral) * 0.52, sin(spiral) * 0.52, logR * 4.15 - uTime * 0.085);
+  float n1 = fbm3(filP, uOctaves);
+  float n2 = fbm3(filP * 2.18 + vec3(1.6, 0.73, -uTime * 0.04), max(uOctaves - 1.0, 1.0));
   float ridge = 1.0 - abs(n1 * 2.0 - 1.0);
   float haze = pow(n1, 2.05) * 0.24 * mix(0.22, 1.0, armCore);
   float threads = pow(ridge, 2.75) * mix(0.14, 1.18, armCore);
