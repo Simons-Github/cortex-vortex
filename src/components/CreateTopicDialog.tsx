@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
 import { createCustomTopic } from "@/lib/gemini-actions";
+import { DAILY_QUOTA_TOAST } from "@/lib/gemini-types";
+import { storeFirstQuestion } from "@/lib/quiz-preload";
 import type { CustomTopicLevel } from "@/lib/supabase";
 
 const TITLE_MIN_LENGTH = 3;
@@ -22,9 +24,6 @@ const LEVEL_OPTIONS: { value: CustomTopicLevel; label: string }[] = [
   { value: "intermediate", label: "Intermediate" },
   { value: "advanced", label: "Advanced" },
 ];
-
-const CREATE_TOPIC_QUOTA_MESSAGE =
-  "Daily AI quota reached (5 requests across explain, quiz, and create topic) — try again tomorrow";
 
 const inputClass =
   "w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-zinc-600 disabled:opacity-60";
@@ -47,6 +46,8 @@ function titleValidationError(trimmedTitle: string): string | null {
  * passed in). On success it navigates straight to the new topic's study
  * room with the already-generated first question attached, so the study
  * room can render question 1 immediately while `generateQuiz` fills the rest.
+ * The question is stored in sessionStorage (not the URL) so the answer is not
+ * shareable via bookmarks or copied links.
  */
 export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
   const { session } = useAuth();
@@ -86,7 +87,7 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
       if ("quotaExceeded" in result) {
         setOpen(false);
         reset();
-        toast.error(CREATE_TOPIC_QUOTA_MESSAGE);
+        toast.error(DAILY_QUOTA_TOAST);
         return;
       }
 
@@ -99,13 +100,14 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
 
       setOpen(false);
       reset();
+      storeFirstQuestion(result.topicId, {
+        question: result.firstQuestion,
+        fallback: result.fallback || undefined,
+      });
       navigate({
         to: "/study/$topicId",
         params: { topicId: result.topicId },
-        search: {
-          firstQuestion: result.firstQuestion,
-          firstQuestionFallback: result.fallback || undefined,
-        },
+        search: { tab: "quiz" },
       });
     } catch (error) {
       console.error("Failed to create custom topic:", error);

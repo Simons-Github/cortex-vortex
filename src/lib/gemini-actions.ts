@@ -32,6 +32,7 @@ import {
   generateQuizQuestions,
   isGeminiConfigured,
   isTopicAllowed,
+  missedStemsTrustedContext,
   verifyGeminiApiKey,
   type GeneratedQuizQuestion,
 } from "@/lib/gemini";
@@ -41,6 +42,7 @@ import {
   getAuthenticatedUser,
   getCustomTopicById,
   insertCustomTopic,
+  listRecentQuizMisses,
   logAiUsage,
   tryLogAiUsage,
   tryLogKeySave,
@@ -230,6 +232,16 @@ async function resolveTopic(topicId: string, accessToken: string): Promise<Topic
   throw new Error(`Unknown topic: ${topicId}`);
 }
 
+/** Best-effort miss stems for adaptive prompts. Never throws — missing RPC/table must not block Gemini. */
+async function loadMissedStems(accessToken: string, topicId: string): Promise<string[]> {
+  try {
+    return await listRecentQuizMisses(accessToken, topicId, 8);
+  } catch (error) {
+    console.error("Failed to load recent quiz misses (non-fatal):", error);
+    return [];
+  }
+}
+
 const PROMPT_VARIANTS = {
   simplify: (topic: Topic) =>
     `Simplify your explanation of "${topic.title}". Use plainer language and one concrete analogy, assuming no prior background.`,
@@ -237,8 +249,9 @@ const PROMPT_VARIANTS = {
     `Go deeper on the technical details of "${topic.title}": formal definitions, edge cases, and the trade-offs an advanced practitioner would care about.`,
   example: (topic: Topic) =>
     `Give one concrete, real-world example that illustrates "${topic.title}" in practice.`,
-  weakSpots: (topic: Topic) =>
-    `Focus specifically on the aspects of "${topic.title}" this learner tends to get wrong in quizzes, and clear up those misconceptions.`,
+  /** Generic fallback when this learner has no logged misses yet. Miss stems are injected via trustedContext. */
+  weakSpots: (_topic: Topic) =>
+    `Focus specifically on the aspects of this topic this learner tends to get wrong in quizzes, and clear up those misconceptions.`,
   custom: (_topic: Topic, message: string) => message,
 } satisfies Record<string, (topic: Topic, message: string) => string>;
 
@@ -304,13 +317,24 @@ export const explainTopic = createServerFn({ method: "POST" })
 
     try {
       const level = levelFor(data.mastery);
+      const variant: PromptVariant = data.variant;
+      const misses =
+        variant === "weakSpots"
+          ? await loadMissedStems(data.accessToken as string, data.topicId)
+          : [];
+      const missContext = missedStemsTrustedContext(misses);
       // Only `topic.title` is treated as a (potentially user-supplied) topic
       // name and wrapped/guarded against prompt injection inside
       // `generateExplanation` — category/summary are static, app-authored
-      // text, so they travel as trusted context instead.
-      const trustedContext = `Category: ${topic.category}. Summary: ${topic.summary}`;
-      const variant: PromptVariant = data.variant;
-      const userQuery = PROMPT_VARIANTS[variant](topic, data.message);
+      // text, and miss stems are persisted quiz questions, so they travel as
+      // trusted context instead.
+      const trustedContext = [`Category: ${topic.category}. Summary: ${topic.summary}`, missContext]
+        .filter(Boolean)
+        .join(" ");
+      const userQuery =
+        variant === "weakSpots" && misses.length > 0
+          ? `Clear up the misconceptions behind this learner's recent quiz misses. Do not repeat the exact wording of those questions.`
+          : PROMPT_VARIANTS[variant](topic, data.message);
       const text = await generateExplanation(
         topic.title,
         level,
@@ -419,7 +443,13 @@ export const generateQuiz = createServerFn({ method: "POST" })
 
     try {
       const level = levelFor(data.mastery);
-      const trustedContext = `Category: ${topic.category}. Summary: ${topic.summary}`;
+      const misses = await loadMissedStems(data.accessToken as string, data.topicId);
+      const trustedContext = [
+        `Category: ${topic.category}. Summary: ${topic.summary}`,
+        missedStemsTrustedContext(misses),
+      ]
+        .filter(Boolean)
+        .join(" ");
       const questions = await generateQuizQuestions(
         topic.title,
         level,

@@ -10,6 +10,7 @@ test.describe("Study Room", () => {
     await expect(page.getByRole("heading", { name: "Recommended Resources" })).toBeVisible();
     await expect(page.getByText("Dynamic Programming, intuitively")).toBeVisible();
     await expect(page.getByRole("button", { name: "Simplify explanation" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Quiz me on the weak spots" })).toBeVisible();
   });
 
   test("locks AI features behind sign-in", async ({ page }) => {
@@ -30,6 +31,51 @@ test.describe("Study Room", () => {
       page.getByText("A quiz question tailored to your mastery level will appear here."),
     ).toBeVisible();
     await expect(page.getByText("Question 1 of 5")).toBeVisible();
+    await expect(page.getByText("+0% Mastery this round")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry missed" })).toHaveCount(0);
+    await expect(page.getByText("Round complete")).toHaveCount(0);
+  });
+
+  test("tab=quiz search opens the quiz panel", async ({ page }) => {
+    await page.goto("/study/algorithms?tab=quiz");
+    await expect(page.getByRole("heading", { name: "Algorithms & Data Structures" })).toBeVisible();
+    await waitForHydration(page);
+
+    await expect(
+      page.getByText("A quiz question tailored to your mastery level will appear here."),
+    ).toBeVisible();
+    await expect(page.getByText("Question 1 of 5")).toBeVisible();
+    await expect(
+      page.getByText("Sign in to unlock AI-powered explanations and quizzes"),
+    ).toBeVisible();
+  });
+
+  test("does not keep a first-question answer in the study URL", async ({ page }) => {
+    await page.goto("/matrix");
+    await waitForHydration(page);
+    await page.evaluate(() => {
+      sessionStorage.setItem(
+        "cortex-vortex:first-question:algorithms",
+        JSON.stringify({
+          question: {
+            question: "Secret stem that must not leak",
+            options: ["A", "B", "C", "D"],
+            correctOptionIndex: 2,
+            explanation: "The answer is C.",
+          },
+        }),
+      );
+    });
+
+    await page.goto("/study/algorithms?tab=quiz&firstQuestionFallback=true");
+    await expect(page.getByRole("heading", { name: "Algorithms & Data Structures" })).toBeVisible();
+    await waitForHydration(page);
+
+    await expect(page).toHaveURL(/\/study\/algorithms\?tab=quiz$/);
+    const leftover = await page.evaluate(() =>
+      sessionStorage.getItem("cortex-vortex:first-question:algorithms"),
+    );
+    expect(leftover).toBeNull();
   });
 
   test("unknown topic shows a not-found state", async ({ page }) => {

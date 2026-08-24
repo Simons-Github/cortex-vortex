@@ -291,3 +291,28 @@ export async function getCustomTopicById(
   if (error) throw error;
   return (data as CustomTopicRow | null) ?? null;
 }
+
+const DEFAULT_MISS_LIMIT = 8;
+
+/**
+ * Last N missed quiz stems for this topic via `list_recent_quiz_misses`.
+ * Used by generate/explain so prompts can target weak spots. Returns `[]`
+ * if Supabase isn't configured or the RPC errors — callers fail open so a
+ * missing migration never blocks Gemini.
+ */
+export async function listRecentQuizMisses(
+  accessToken: string,
+  topicId: string,
+  limit = DEFAULT_MISS_LIMIT,
+): Promise<string[]> {
+  const client = createUserScopedClient(accessToken);
+  if (!client) return [];
+
+  const { data, error } = await client.rpc("list_recent_quiz_misses", {
+    p_topic_id: topicId,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  if (!Array.isArray(data)) return [];
+  return data.filter((stem): stem is string => typeof stem === "string" && stem.trim().length > 0);
+}

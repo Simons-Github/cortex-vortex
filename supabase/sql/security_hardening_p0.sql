@@ -32,6 +32,19 @@ revoke all on function public.try_log_key_save(text) from public;
 revoke all on function public.try_log_key_save(text) from anon;
 grant execute on function public.try_log_key_save(text) to authenticated;
 
+-- Quiz attempts (see quiz_attempts.sql — apply that file first on a fresh DB).
+revoke all on function public.log_quiz_attempt(text, text, boolean) from public;
+revoke all on function public.log_quiz_attempt(text, text, boolean) from anon;
+grant execute on function public.log_quiz_attempt(text, text, boolean) to authenticated;
+
+revoke all on function public.list_recent_quiz_misses(text, integer) from public;
+revoke all on function public.list_recent_quiz_misses(text, integer) from anon;
+grant execute on function public.list_recent_quiz_misses(text, integer) to authenticated;
+
+revoke all on function public.apply_quiz_result(text, boolean) from public;
+revoke all on function public.apply_quiz_result(text, boolean) from anon;
+grant execute on function public.apply_quiz_result(text, boolean) to authenticated;
+
 -- BYOK privileged RPCs: service_role only (never anon/authenticated).
 revoke all on function public.service_require_role() from public;
 revoke all on function public.service_require_role() from anon;

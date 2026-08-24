@@ -15,11 +15,11 @@ Built as a full-stack portfolio project — works as a demo without a backend; s
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT License" />
 </p>
 
-| | |
-| --- | --- |
-| **Live Demo** | [vortex.berger-labs.com](https://vortex.berger-labs.com) |
+|                |                                                                                          |
+| -------------- | ---------------------------------------------------------------------------------------- |
+| **Live Demo**  | [vortex.berger-labs.com](https://vortex.berger-labs.com)                                 |
 | **Repository** | [github.com/Simons-Github/cortex-vortex](https://github.com/Simons-Github/cortex-vortex) |
-| **Author** | [Simon Berger](https://github.com/Simons-Github) |
+| **Author**     | [Simon Berger](https://github.com/Simons-Github)                                         |
 
 ---
 
@@ -33,15 +33,15 @@ Portfolio goal: a real full-stack app with auth, RLS, server-side AI, and a demo
 
 ## Screenshots
 
-| Landing | Dashboard |
-| :-----: | :-------: |
+|                                    Landing                                    |                                             Dashboard                                              |
+| :---------------------------------------------------------------------------: | :------------------------------------------------------------------------------------------------: |
 | <img src="./public/screenshots/landing.png" alt="Landing page" width="640" /> | <img src="./public/screenshots/dashboard.png" alt="Dashboard with Knowledge Vortex" width="640" /> |
-| Hero & auth | Vortex, decay %, streak |
+|                                  Hero & auth                                  |                                      Vortex, decay %, streak                                       |
 
-| Knowledge Matrix | Study Room — Quiz |
-| :--------------: | :---------------: |
+|                                 Knowledge Matrix                                 |                               Study Room — Quiz                                |
+| :------------------------------------------------------------------------------: | :----------------------------------------------------------------------------: |
 | <img src="./public/screenshots/matrix.png" alt="Knowledge Matrix" width="640" /> | <img src="./public/screenshots/quizz.png" alt="Study Room quiz" width="640" /> |
-| Search, filters, mastery | Adaptive multiple choice |
+|                             Search, filters, mastery                             |                            Adaptive multiple choice                            |
 
 <p align="center">
   <img src="./public/screenshots/settings.png" alt="Settings" width="720" />
@@ -68,15 +68,15 @@ Portfolio goal: a real full-stack app with auth, RLS, server-side AI, and a demo
 
 ## Tech Stack
 
-| Area | Technology |
-| ---- | ---------- |
+| Area     | Technology                                            |
+| -------- | ----------------------------------------------------- |
 | Frontend | React 19, TypeScript, TanStack Router / Start / Query |
-| Styling | Tailwind CSS 4, shadcn/ui, Lucide |
-| AI | Google Gemini (`@google/genai`, server-only) |
-| Backend | Supabase (PostgreSQL, Auth, RLS, RPCs) |
-| Server | TanStack Start server functions, Nitro |
-| Hosting | [Vercel](https://vortex.berger-labs.com) |
-| Tooling | Vite 8, ESLint, Prettier, Playwright |
+| Styling  | Tailwind CSS 4, shadcn/ui, Lucide                     |
+| AI       | Google Gemini (`@google/genai`, server-only)          |
+| Backend  | Supabase (PostgreSQL, Auth, RLS, RPCs)                |
+| Server   | TanStack Start server functions, Nitro                |
+| Hosting  | [Vercel](https://vortex.berger-labs.com)              |
+| Tooling  | Vite 8, ESLint, Prettier, Playwright                  |
 
 ---
 
@@ -98,37 +98,37 @@ No separate REST backend: UI and client logic live in the frontend; persistence 
 
 ### Design Decisions (Portfolio)
 
-| Decision | Why |
-| -------- | --- |
-| Server functions instead of client-side Gemini | API key stays on the server; CSRF middleware for server fns |
-| RLS + SECURITY DEFINER RPCs | Mastery/streak/custom topics are SELECT-only for clients; writes only via RPCs |
-| Demo without keys | Recruiting/review path: clickable immediately, no setup |
-| localStorage → Supabase merge | Pre-login progress isn’t lost after sign-in |
-| Combined daily quota + burst RPCs | Cost control for Gemini on a public demo, across Vercel instances |
-| BYOK in `private` + AES-256-GCM | User keys never hit PostgREST as plaintext; daily quota protects only the platform key |
+| Decision                                       | Why                                                                                    |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Server functions instead of client-side Gemini | API key stays on the server; CSRF middleware for server fns                            |
+| RLS + SECURITY DEFINER RPCs                    | Mastery/streak/custom topics are SELECT-only for clients; writes only via RPCs         |
+| Demo without keys                              | Recruiting/review path: clickable immediately, no setup                                |
+| localStorage → Supabase merge                  | Pre-login progress isn’t lost after sign-in                                            |
+| Combined daily quota + burst RPCs              | Cost control for Gemini on a public demo, across Vercel instances                      |
+| BYOK in `private` + AES-256-GCM                | User keys never hit PostgREST as plaintext; daily quota protects only the platform key |
 
 ---
 
 ## Feature Status
 
-| Feature | Status |
-| ------- | ------ |
-| Landing page + demo access | ✅ |
-| Dashboard (vortex, decay %, stats, streak) | ✅ |
-| Study Room — explanation chat | ✅ |
-| Study Room — adaptive quizzes | ✅ |
-| Knowledge Matrix (filter / search) | ✅ |
-| Custom topics (Gemini + moderation) | ✅ (5-question quiz rounds) |
-| Login / sign-up (email) | ✅ |
-| Mastery sync (Supabase) + localStorage fallback | ✅ |
-| Streak tracking | ✅ |
-| Combined AI daily quota (5) + 60s burst limits | ✅ |
-| Bring-your-own Gemini key (encrypted, signed-in) | ✅ |
-| Settings (Gemini status, BYOK key, preferences UI) | ✅ |
-| Live demo on Vercel | ✅ |
-| Google OAuth | ✅ |
-| GitHub Actions CI | ✅ |
-| E2E tests (Playwright) | ✅ |
+| Feature                                            | Status                      |
+| -------------------------------------------------- | --------------------------- |
+| Landing page + demo access                         | ✅                          |
+| Dashboard (vortex, decay %, stats, streak)         | ✅                          |
+| Study Room — explanation chat                      | ✅                          |
+| Study Room — adaptive quizzes                      | ✅                          |
+| Knowledge Matrix (filter / search)                 | ✅                          |
+| Custom topics (Gemini + moderation)                | ✅ (5-question quiz rounds) |
+| Login / sign-up (email)                            | ✅                          |
+| Mastery sync (Supabase) + localStorage fallback    | ✅                          |
+| Streak tracking                                    | ✅                          |
+| Combined AI daily quota (5) + 60s burst limits     | ✅                          |
+| Bring-your-own Gemini key (encrypted, signed-in)   | ✅                          |
+| Settings (Gemini status, BYOK key, preferences UI) | ✅                          |
+| Live demo on Vercel                                | ✅                          |
+| Google OAuth                                       | ✅                          |
+| GitHub Actions CI                                  | ✅                          |
+| E2E tests (Playwright)                             | ✅                          |
 
 ---
 
@@ -172,14 +172,15 @@ Apply **all** of `supabase/sql/` in the SQL Editor **before** deploying app code
 1. `profiles.sql` — profiles + signup trigger
 2. `user_topic_mastery.sql` — mastery table (SELECT-only)
 3. `mastery_streak_rpcs.sql` — `increment_mastery` / `touch_streak`
-4. `ai_usage_log.sql` — usage log + `log_ai_usage` / `try_log_ai_usage`
-5. `custom_topics.sql` — custom topics table (SELECT-only; no client INSERT)
-6. `user_gemini_keys.sql` — `private.user_gemini_keys` + service_role RPCs + `try_log_key_save`
-7. `create_custom_topic.sql` — atomic quota + insert RPC (skips quota when a BYOK row exists)
-8. `ai_burst_limit.sql` — **last** among usage-log files (`burst_*` including `burst_save_key`)
-9. `security_hardening_p0.sql` — extra GRANT/REVOKE hardening (safe on a fresh DB too)
+4. `quiz_attempts.sql` — attempt log + `log_quiz_attempt` / `list_recent_quiz_misses` / `apply_quiz_result`
+5. `ai_usage_log.sql` — usage log + `log_ai_usage` / `try_log_ai_usage`
+6. `custom_topics.sql` — custom topics table (SELECT-only; no client INSERT)
+7. `user_gemini_keys.sql` — `private.user_gemini_keys` + service_role RPCs + `try_log_key_save`
+8. `create_custom_topic.sql` — atomic quota + insert RPC (skips quota when a BYOK row exists)
+9. `ai_burst_limit.sql` — **last** among usage-log files (`burst_*` including `burst_save_key`)
+10. `security_hardening_p0.sql` — extra GRANT/REVOKE hardening (safe on a fresh DB too)
 
-**Existing project (upgrade)** — same files; also re-run `ai_combined_daily_quota.sql` if the DB still has a per-endpoint daily cap instead of the combined pool of 5. Always run `ai_burst_limit.sql` after `custom_topics.sql`. For BYOK, run `user_gemini_keys.sql` then re-run `create_custom_topic.sql` and `ai_burst_limit.sql`.
+**Existing project (upgrade)** — same files; also re-run `quiz_attempts.sql` for attempt logging + `apply_quiz_result`. Also re-run `ai_combined_daily_quota.sql` if the DB still has a per-endpoint daily cap instead of the combined pool of 5. Always run `ai_burst_limit.sql` after `custom_topics.sql`. For BYOK, run `user_gemini_keys.sql` then re-run `create_custom_topic.sql` and `ai_burst_limit.sql`.
 
 Then:
 
@@ -189,18 +190,18 @@ Then:
 
 ### Scripts
 
-| Command | Description |
-| ------- | ----------- |
-| `npm run dev` | Dev server (port 8080) |
-| `npm run lint` | ESLint |
-| `npm run typecheck` | TypeScript (`tsc --noEmit`) |
-| `npm run format` | Prettier |
-| `npm run build` | Production build (client + Nitro) |
-| `npm run preview` | Preview the local build |
-| `npm run test:e2e` | Playwright demo smoke tests (starts the dev server) |
-| `npm run test:e2e:ui` | Playwright UI mode |
+| Command                                    | Description                                                |
+| ------------------------------------------ | ---------------------------------------------------------- |
+| `npm run dev`                              | Dev server (port 8080)                                     |
+| `npm run lint`                             | ESLint                                                     |
+| `npm run typecheck`                        | TypeScript (`tsc --noEmit`)                                |
+| `npm run format`                           | Prettier                                                   |
+| `npm run build`                            | Production build (client + Nitro)                          |
+| `npm run preview`                          | Preview the local build                                    |
+| `npm run test:e2e`                         | Playwright demo smoke tests (starts the dev server)        |
+| `npm run test:e2e:ui`                      | Playwright UI mode                                         |
 | `npx tsx scripts/test-topic-moderation.ts` | Gemini moderation cases + RPC/INSERT probes (needs `.env`) |
-| `npx tsx scripts/test-user-key-crypto.ts` | AES-GCM roundtrip, AAD tamper, hint masking |
+| `npx tsx scripts/test-user-key-crypto.ts`  | AES-GCM roundtrip, AAD tamper, hint masking                |
 
 After a local Node-preset build:
 
@@ -225,23 +226,27 @@ PLAYWRIGHT_BASE_URL=https://vortex.berger-labs.com npm run test:e2e
 
 ## Database
 
-| Table / RPC | Purpose |
-| ----------- | ------- |
-| `profiles` | Streak (`streak_count`, `last_active_date`) — SELECT-only for clients |
-| `user_topic_mastery` | Mastery score per topic — SELECT-only |
-| `custom_topics` | User-created topics — SELECT-only; inserts via RPC only |
-| `ai_usage_log` | Rolling 24h AI quota log (plus 60s `burst_*` rows) |
-| `private.user_gemini_keys` | Encrypted BYOK Gemini keys — not in the Data API; service_role RPCs only |
-| `service_*_user_gemini_key` | SECURITY DEFINER — upsert/load/hint/delete; `auth.role()` must be `service_role` |
-| `try_log_key_save` | SECURITY DEFINER — 5 key-saves per rolling 10 minutes |
-| `increment_mastery` | SECURITY DEFINER — delta ±10, score 0–100 |
-| `touch_streak` | SECURITY DEFINER — streak per calendar day |
-| `create_custom_topic` | SECURITY DEFINER — quota + insert (quota skipped when a BYOK row exists) |
-| `log_ai_usage` | SECURITY DEFINER — visibility-only rows (e.g. `topic_moderation`) |
-| `try_log_ai_usage` | SECURITY DEFINER — atomic combined 24h quota (5 across explain/quiz/create_topic) |
-| `try_log_ai_burst` | SECURITY DEFINER — atomic 60s burst reserve |
+| Table / RPC                 | Purpose                                                                           |
+| --------------------------- | --------------------------------------------------------------------------------- |
+| `profiles`                  | Streak (`streak_count`, `last_active_date`) — SELECT-only for clients             |
+| `user_topic_mastery`        | Mastery score per topic — SELECT-only                                             |
+| `custom_topics`             | User-created topics — SELECT-only; inserts via RPC only                           |
+| `ai_usage_log`              | Rolling 24h AI quota log (plus 60s `burst_*` rows)                                |
+| `private.user_gemini_keys`  | Encrypted BYOK Gemini keys — not in the Data API; service_role RPCs only          |
+| `service_*_user_gemini_key` | SECURITY DEFINER — upsert/load/hint/delete; `auth.role()` must be `service_role`  |
+| `try_log_key_save`          | SECURITY DEFINER — 5 key-saves per rolling 10 minutes                             |
+| `quiz_attempts`             | Per-answer log (SELECT-only); stems truncated to 500                              |
+| `log_quiz_attempt`          | SECURITY DEFINER — insert one attempt (`auth.uid()`)                              |
+| `list_recent_quiz_misses`   | SECURITY DEFINER — last N missed stems for a topic                                |
+| `apply_quiz_result`         | SECURITY DEFINER — `correct` only; delta via `levelFor` then `increment_mastery`  |
+| `increment_mastery`         | SECURITY DEFINER — delta ±10, score 0–100 (`last_reviewed_at`)                    |
+| `touch_streak`              | SECURITY DEFINER — streak per calendar day                                        |
+| `create_custom_topic`       | SECURITY DEFINER — quota + insert (quota skipped when a BYOK row exists)          |
+| `log_ai_usage`              | SECURITY DEFINER — visibility-only rows (e.g. `topic_moderation`)                 |
+| `try_log_ai_usage`          | SECURITY DEFINER — atomic combined 24h quota (5 across explain/quiz/create_topic) |
+| `try_log_ai_burst`          | SECURITY DEFINER — atomic 60s burst reserve                                       |
 
-Relevant tables use **Row Level Security** (`auth.uid()` = own row). Mastery, streak, and custom topics are not written directly from the client — only through RPCs.
+Relevant tables use **Row Level Security** (`auth.uid()` = own row). Mastery, streak, custom topics, and quiz attempts are not written directly from the client — only through RPCs.
 
 **Daily AI limit (rolling 24h, combined):** 5 requests total across Explain, Quiz, and Create Topic — skipped when the caller has a stored BYOK key (the pool protects the platform key, not the user's own Google bill)  
 **Burst limits (rolling 60s, cross-instance):** Explain 20 · Quiz 30 · Create Topic 5 (still apply with BYOK)  
@@ -286,14 +291,14 @@ Production builds use [Nitro](https://nitro.build). On Vercel, `vercel.json` set
 2. Confirm Auth redirect URLs include the production origin.
 3. Set env vars on Vercel (never a Supabase **service role** key in the client):
 
-| Variable | Scope |
-| -------- | ----- |
-| `VITE_SUPABASE_URL` | Build + runtime |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | Build + runtime |
-| `GEMINI_API_KEY` | Runtime (server-only) |
-| `GEMINI_MODEL` | Optional |
-| `USER_KEY_ENCRYPTION_SECRET` | Runtime (server-only, BYOK) |
-| `SUPABASE_SERVICE_ROLE_KEY` | Runtime (server-only, BYOK) |
+| Variable                        | Scope                       |
+| ------------------------------- | --------------------------- |
+| `VITE_SUPABASE_URL`             | Build + runtime             |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Build + runtime             |
+| `GEMINI_API_KEY`                | Runtime (server-only)       |
+| `GEMINI_MODEL`                  | Optional                    |
+| `USER_KEY_ENCRYPTION_SECRET`    | Runtime (server-only, BYOK) |
+| `SUPABASE_SERVICE_ROLE_KEY`     | Runtime (server-only, BYOK) |
 
 Leave **Output Directory** empty in project settings (no manual `dist`).
 
@@ -303,7 +308,7 @@ Demo mode (no Supabase/Gemini) is intentional for local clones. Production shoul
 
 ## Known limitations
 
-- Custom-topic **quizzes** ship the first generated question at create time. Later questions are not generated yet (`generateQuiz` only resolves the static demo catalog). Explain chat does support custom topic ids.
+- Custom-topic **quizzes** seed question 1 at create time via `sessionStorage` (not the URL). The rest of the 5-question round is filled by `generateQuiz`, which resolves both demo and custom topics.
 - Topic-name moderation (`isTopicAllowed`) runs in the app server, not inside `create_custom_topic`. A direct PostgREST RPC call can skip Gemini classification (quota and structural title checks still apply).
 - Playwright covers the unsigned demo path, not signed-in AI flows. Use `scripts/test-topic-moderation.ts` for moderation/RPC probes.
 
@@ -314,7 +319,7 @@ Demo mode (no Supabase/Gemini) is intentional for local clones. Production shoul
 - [x] Google OAuth
 - [x] GitHub Actions (lint + typecheck + build + Playwright)
 - [x] Playwright smoke tests (demo path; optional live URL via `PLAYWRIGHT_BASE_URL`)
-- [ ] Follow-up quiz questions for custom topics
+- [x] Follow-up quiz questions for custom topics
 - [ ] Short architecture note / case study for applications
 
 ---

@@ -12,6 +12,10 @@ import type { GeneratedQuizQuestion } from "@/lib/gemini";
 /** Questions per round — one Gemini call, one daily-quota slot. */
 export const QUIZ_SESSION_SIZE = 5;
 
+/** Combined daily quota (platform key) — explain + quiz + create topic. */
+export const DAILY_QUOTA_TOAST =
+  "Daily AI quota reached (5 requests across explain, quiz, and create topic) — try again tomorrow";
+
 export type FallbackReason = "not-configured" | "rate-limited" | "api-error";
 
 export type UserGeminiKeyStatus = { configured: true; hint: string } | { configured: false };

@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -11,6 +11,7 @@ import {
   Lock,
   LogIn,
   Play,
+  Repeat2,
   RotateCcw,
   Sparkles,
   X,
@@ -24,26 +25,15 @@ import { AuthDialog } from "@/components/AuthDialog";
 import { useAuth } from "@/lib/auth";
 import { levelFor, topics, type ChatTurn, type Topic } from "@/lib/mock-data";
 import { explainTopic, generateQuiz } from "@/lib/gemini-actions";
-import { QUIZ_SESSION_SIZE, type FallbackReason } from "@/lib/gemini-types";
+import { DAILY_QUOTA_TOAST, QUIZ_SESSION_SIZE, type FallbackReason } from "@/lib/gemini-types";
 import type { GeneratedQuizQuestion } from "@/lib/gemini";
 import { useMasteryStore } from "@/lib/mastery-store";
-import { getMergedTopics, type TopicSource } from "@/lib/supabase";
+import { formatMasteryDelta, quizMasteryDelta } from "@/lib/quiz-mastery";
+import { clearStoredFirstQuestion, readStoredFirstQuestion } from "@/lib/quiz-preload";
+import { getMergedTopics, logQuizAttempt, type TopicSource } from "@/lib/supabase";
 
-/**
- * Optional pre-generated first quiz question, attached to the URL when
- * navigating here straight from `CreateTopicDialog` — lets the quiz tab
- * render question 1 immediately while `generateQuiz` fills the rest of the round.
- */
 const studySearchSchema = z.object({
-  firstQuestion: z
-    .object({
-      question: z.string(),
-      options: z.array(z.string()),
-      correctOptionIndex: z.number(),
-      explanation: z.string(),
-    })
-    .optional(),
-  firstQuestionFallback: z.boolean().optional(),
+  tab: z.enum(["explanation", "quiz"]).optional(),
 });
 
 export const Route = createFileRoute("/study/$topicId")({
@@ -87,7 +77,7 @@ function notifyFallback(reason?: FallbackReason) {
   toast.info(FALLBACK_MESSAGES[reason ?? "api-error"]);
 }
 
-const QUOTA_TOAST_MESSAGE = "Daily AI quota reached — try again tomorrow";
+const QUOTA_TOAST_MESSAGE = DAILY_QUOTA_TOAST;
 
 /** Overlay shown on top of a grayed-out AI feature (chat input, quick prompts, quiz) when signed out. */
 function SignInOverlay() {
@@ -184,8 +174,23 @@ function StudyRoom() {
   const params = Route.useParams();
   const demoTopic = Route.useLoaderData() as Topic | null;
   const search = Route.useSearch();
+  const navigate = useNavigate({ from: "/study/$topicId" });
   const { user } = useAuth();
   const isAuthed = Boolean(user);
+
+  // Drop leftover firstQuestion / firstQuestionFallback (and any other junk)
+  // from old bookmarks so the correct answer never stays in the address bar.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const extra = [...new URL(window.location.href).searchParams.keys()].filter(
+      (key) => key !== "tab",
+    );
+    if (extra.length === 0) return;
+    void navigate({
+      search: search.tab ? { tab: search.tab } : {},
+      replace: true,
+    });
+  }, [navigate, search.tab]);
 
   // `demoTopic` is only ever set for the app's built-in topics — anything
   // else might be a signed-in user's custom topic, discoverable only via
@@ -214,30 +219,29 @@ function StudyRoom() {
     return <TopicStatusScreen>Couldn't find that topic.</TopicStatusScreen>;
   }
 
-  return (
-    <StudyRoomContent
-      topic={topic}
-      source={source}
-      preloadedFirstQuestion={search.firstQuestion}
-      preloadedFirstQuestionFallback={search.firstQuestionFallback}
-    />
-  );
+  return <StudyRoomContent topic={topic} source={source} initialTab={search.tab} />;
 }
 
 function StudyRoomContent({
   topic,
   source,
-  preloadedFirstQuestion,
-  preloadedFirstQuestionFallback,
+  initialTab,
 }: {
   topic: Topic;
   source: TopicSource;
-  preloadedFirstQuestion?: GeneratedQuizQuestion | undefined;
-  preloadedFirstQuestionFallback?: boolean | undefined;
+  initialTab?: "explanation" | "quiz" | undefined;
 }) {
-  const [tab, setTab] = useState<"explanation" | "quiz">(() =>
-    preloadedFirstQuestion ? "quiz" : "explanation",
+  const [storedFirst] = useState(() => readStoredFirstQuestion(topic.id));
+  const preloadedFirstQuestion = storedFirst?.question;
+  const preloadedFirstQuestionFallback = storedFirst?.fallback;
+  const [tab, setTab] = useState<"explanation" | "quiz">(
+    () => initialTab ?? (preloadedFirstQuestion ? "quiz" : "explanation"),
   );
+
+  useEffect(() => {
+    clearStoredFirstQuestion(topic.id);
+  }, [topic.id]);
+
   const { getMastery, isLoading } = useMasteryStore();
   const [mastery, setMastery] = useState(() => getMastery(topic));
   const syncedInitialRef = useRef(false);
@@ -537,44 +541,70 @@ function appendUniqueQuestions(
   return [...existing, ...extra];
 }
 
+function shuffleCopy<T>(items: T[]): T[] {
+  const next = [...items];
+  for (let i = next.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const a = next[i];
+    const b = next[j];
+    if (a === undefined || b === undefined) continue;
+    next[i] = b;
+    next[j] = a;
+  }
+  return next;
+}
+
 function QuizRecap({
   questions,
   answers,
   gain,
   loading,
+  hasRetries,
+  missed,
   onAgain,
+  onRetryMissed,
   onStudy,
 }: {
   questions: GeneratedQuizQuestion[];
   answers: Record<number, number>;
   gain: number;
   loading: boolean;
+  hasRetries: boolean;
+  missed: { q: GeneratedQuizQuestion; i: number; picked: number }[];
   onAgain: () => void;
+  onRetryMissed: () => void;
   onStudy: () => void;
 }) {
   const correctCount = questions.reduce(
     (n, q, i) => n + (answers[i] === q.correctOptionIndex ? 1 : 0),
     0,
   );
-  const missed = questions
-    .map((q, i) => ({ q, i, picked: answers[i] }))
-    .filter(
-      (row): row is { q: GeneratedQuizQuestion; i: number; picked: number } =>
-        row.picked !== undefined && row.picked !== row.q.correctOptionIndex,
-    );
 
   return (
     <div className="rounded-2xl border border-border bg-[#121212] p-6">
-      <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Round complete</p>
+      <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+        {hasRetries ? "Visit so far" : "Round complete"}
+      </p>
       <h2 className="mt-2 text-2xl font-light tracking-tight text-foreground">
         {correctCount} / {questions.length} correct
       </h2>
-      <p className={`mt-1 text-sm ${gain > 0 ? "text-foreground" : "text-muted-foreground"}`}>
-        +{gain}% mastery this round
+      <p
+        className={`mt-1 text-sm ${
+          gain > 0 ? "text-foreground" : gain < 0 ? "text-destructive" : "text-muted-foreground"
+        }`}
+      >
+        {formatMasteryDelta(gain)} mastery {hasRetries ? "this visit" : "this round"}
       </p>
+      {hasRetries ? (
+        <p className="mt-1 text-xs text-muted-foreground">Including retries this visit</p>
+      ) : null}
 
       {missed.length === 0 ? (
-        <p className="mt-5 text-sm text-muted-foreground">Clean sweep — nothing to review.</p>
+        <p className="mt-5 text-sm text-muted-foreground">
+          {hasRetries
+            ? "Latest retry cleared — nothing left to retry."
+            : "Clean sweep — nothing to review."}
+        </p>
       ) : (
         <ul className="mt-5 space-y-3">
           {missed.map(({ q, i, picked }) => (
@@ -602,6 +632,17 @@ function QuizRecap({
         >
           Review in explanation
         </button>
+        {missed.length > 0 ? (
+          <button
+            type="button"
+            onClick={onRetryMissed}
+            disabled={loading}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm text-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+          >
+            <Repeat2 className="h-4 w-4" />
+            Retry missed
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={onAgain}
@@ -637,7 +678,7 @@ function QuizTab({
 }) {
   const { user, session } = useAuth();
   const isAuthed = Boolean(user);
-  const { incrementMastery, touchStreak } = useMasteryStore();
+  const { applyQuizResult, touchStreak, mode } = useMasteryStore();
   const [questions, setQuestions] = useState<GeneratedQuizQuestion[]>(() =>
     preloadedFirstQuestion ? [preloadedFirstQuestion] : [],
   );
@@ -646,6 +687,7 @@ function QuizTab({
   const [gain, setGain] = useState(0);
   const [loading, setLoading] = useState(true);
   const [phase, setPhase] = useState<"playing" | "recap">("playing");
+  const [segmentStart, setSegmentStart] = useState(0);
   const { quotaExceeded, lockQuota } = useDailyQuotaLock();
   const gainsRef = useRef<Record<number, number>>({});
   const fetchedRef = useRef(false);
@@ -697,6 +739,7 @@ function QuizTab({
           setIndex(0);
           setAnswers({});
           setGain(0);
+          setSegmentStart(0);
           gainsRef.current = {};
           setPhase("playing");
         } else {
@@ -727,6 +770,29 @@ function QuizTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topic.id, isAuthed, quotaExceeded, accessToken]);
 
+  const latestMissed = questions
+    .slice(segmentStart)
+    .map((q, j) => ({ q, i: segmentStart + j, picked: answers[segmentStart + j] }))
+    .filter(
+      (row): row is { q: GeneratedQuizQuestion; i: number; picked: number } =>
+        row.picked !== undefined && row.picked !== row.q.correctOptionIndex,
+    );
+
+  const retryMissed = () => {
+    if (latestMissed.length === 0) return;
+    const shuffled = shuffleCopy(latestMissed.map((row) => row.q));
+    const start = questions.length;
+    setQuestions((prev) => [...prev, ...shuffled]);
+    setAnswers((a) => {
+      const next = { ...a };
+      for (let i = 0; i < shuffled.length; i++) delete next[start + i];
+      return next;
+    });
+    setSegmentStart(start);
+    setIndex(start);
+    setPhase("playing");
+  };
+
   const q = questions[index];
   const selected = answers[index];
   const answered = selected !== undefined;
@@ -740,23 +806,30 @@ function QuizTab({
     if (answered || !q) return;
     setAnswers((a) => ({ ...a, [index]: i }));
     const isCorrect = i === q.correctOptionIndex;
+    const previous = mastery;
+    const predicted = quizMasteryDelta(isCorrect, previous);
+    gainsRef.current[index] = predicted;
+    setGain((g) => g + predicted);
+    setMastery(Math.max(0, Math.min(100, previous + predicted)));
 
-    if (isCorrect) {
-      // The server (or the local fallback) clamps and validates this — we
-      // never trust a client-computed final score, only a small delta.
-      const delta = 5 + Math.floor(Math.random() * 6); // 5–10 inclusive
-      gainsRef.current[index] = delta;
-      setGain((g) => g + delta);
-      // Optimistic UI update, reconciled below with the authoritative row.
-      setMastery(Math.min(100, mastery + delta));
+    applyQuizResult(topic.id, isCorrect, mastery)
+      .then(({ score, delta }) => {
+        setMastery(score);
+        if (delta !== predicted) {
+          gainsRef.current[index] = delta;
+          setGain((g) => g - predicted + delta);
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to save mastery:", error);
+        toast.error("Couldn't update your mastery.");
+      });
 
-      // Baseline 0 when no store row exists — never seed from mock `topic.mastery`.
-      incrementMastery(topic.id, delta)
-        .then((finalScore) => setMastery(finalScore))
-        .catch((error) => {
-          console.error("Failed to save mastery gain:", error);
-          toast.error("Couldn't save your mastery gain to your account.");
-        });
+    if (mode === "synced") {
+      void logQuizAttempt(topic.id, q.question, isCorrect).catch((error) => {
+        console.error("Failed to log quiz attempt:", error);
+        toast.error("Couldn't save this quiz attempt.");
+      });
     }
 
     if (!streakTouchedRef.current) {
@@ -771,7 +844,7 @@ function QuizTab({
         <div className="pointer-events-none select-none opacity-40">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>Question 1 of {QUIZ_SESSION_SIZE}</span>
-            <span>+0% Mastery this round</span>
+            <span>{formatMasteryDelta(gain)} Mastery this round</span>
           </div>
           <h2 className="mt-4 text-lg font-light leading-snug text-foreground">
             A quiz question tailored to your mastery level will appear here.
@@ -800,7 +873,9 @@ function QuizTab({
         <div className="pointer-events-none select-none opacity-40">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>Question 1 of {QUIZ_SESSION_SIZE}</span>
-            <span className={gain > 0 ? "text-foreground" : ""}>+{gain}% Mastery this round</span>
+            <span className={gain > 0 ? "text-foreground" : gain < 0 ? "text-destructive" : ""}>
+              {formatMasteryDelta(gain)} Mastery this round
+            </span>
           </div>
           <h2 className="mt-4 text-lg font-light leading-snug text-foreground">
             You've used up today's AI quota.
@@ -830,7 +905,10 @@ function QuizTab({
         answers={answers}
         gain={gain}
         loading={loading}
+        hasRetries={segmentStart > 0}
+        missed={latestMissed}
         onAgain={() => loadQuestions([], "replace")}
+        onRetryMissed={retryMissed}
         onStudy={onReviewExplanation}
       />
     );
@@ -866,7 +944,9 @@ function QuizTab({
         <span>
           Question {index + 1} of {expectingMore ? QUIZ_SESSION_SIZE : questions.length}
         </span>
-        <span className={gain > 0 ? "text-foreground" : ""}>+{gain}% Mastery this round</span>
+        <span className={gain > 0 ? "text-foreground" : gain < 0 ? "text-destructive" : ""}>
+          {formatMasteryDelta(gain)} Mastery this round
+        </span>
       </div>
 
       {expectingMore && (
@@ -916,7 +996,9 @@ function QuizTab({
       {answered && (
         <div className="mt-5 rounded-xl border border-border bg-background p-4">
           <p className="text-sm font-medium text-foreground">
-            {correct ? `Correct · +${questionGain}% mastery` : "Not quite"}
+            {correct
+              ? `Correct · ${formatMasteryDelta(questionGain)} mastery`
+              : `Not quite · ${formatMasteryDelta(questionGain)} mastery`}
           </p>
           <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{q.explanation}</p>
         </div>

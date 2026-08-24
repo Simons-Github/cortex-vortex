@@ -66,11 +66,13 @@ export async function getTopicMastery(userId: string): Promise<TopicMastery[]> {
 
 /**
  * Bumps mastery for a topic through the `increment_mastery` Postgres RPC.
- * This is deliberately the *only* way mastery ever changes server-side:
+ * Used for login-merge of local scores (arbitrary totals, chunked at ±10).
+ * Quiz answers must go through `applyTopicQuizResult` instead so the delta
+ * is chosen server-side rather than rolled on the client.
+ *
  * `user_topic_mastery` has no client-writable insert/update RLS policy, and
  * the RPC (`SECURITY DEFINER`) both clamps `mastery_score` to [0, 100] and
- * rejects any `delta` outside [-10, 10] — never trust a client-computed
- * final score, only ever send a small delta and use the row it returns.
+ * rejects any `delta` outside [-10, 10].
  */
 export async function incrementTopicMastery(topicId: string, delta: number): Promise<TopicMastery> {
   const { data, error } = await requireClient().rpc("increment_mastery", {
@@ -81,6 +83,47 @@ export async function incrementTopicMastery(topicId: string, delta: number): Pro
   if (error) throw error;
   if (!data) throw new Error("increment_mastery returned no row.");
   return data as TopicMastery;
+}
+
+/**
+ * Applies one quiz answer through `apply_quiz_result`. The client only sends
+ * `correct` — Postgres picks the delta (Beginner +3 / Intermediate +2 /
+ * Advanced +1 / miss −1), then `increment_mastery` clamps and stamps
+ * `last_reviewed_at`.
+ */
+export async function applyTopicQuizResult(
+  topicId: string,
+  correct: boolean,
+): Promise<TopicMastery> {
+  const { data, error } = await requireClient().rpc("apply_quiz_result", {
+    p_topic_id: topicId,
+    p_correct: correct,
+  });
+
+  if (error) throw error;
+  if (!data) throw new Error("apply_quiz_result returned no row.");
+  return data as TopicMastery;
+}
+
+const QUIZ_STEM_MAX = 500;
+
+/**
+ * Persists one quiz answer through `log_quiz_attempt`. Not a Gemini call and
+ * not quota-gated. Fire-and-forget from the quiz UI — failures should toast,
+ * never block answering.
+ */
+export async function logQuizAttempt(
+  topicId: string,
+  stem: string,
+  correct: boolean,
+): Promise<void> {
+  const { error } = await requireClient().rpc("log_quiz_attempt", {
+    p_topic_id: topicId,
+    p_stem: stem.trim().slice(0, QUIZ_STEM_MAX),
+    p_correct: correct,
+  });
+
+  if (error) throw error;
 }
 
 /**

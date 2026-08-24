@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { waitForHydration } from "./helpers";
 
 test.describe("Dashboard", () => {
   test.beforeEach(async ({ page }) => {
@@ -15,13 +16,21 @@ test.describe("Dashboard", () => {
     await expect(page.getByText(/Day Streak/)).toBeVisible();
   });
 
-  test("Start Quiz opens a study room", async ({ page }) => {
+  test("Start Quiz opens the quiz tab", async ({ page }) => {
     await page.getByRole("link", { name: "Start Quiz" }).click();
 
     await expect(page).toHaveURL(/\/study\//);
+    await expect(page).toHaveURL(/tab=quiz/);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(page.getByRole("button", { name: "explanation", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "quiz", exact: true })).toBeVisible();
+    await waitForHydration(page);
+    await expect(
+      page.getByText("Sign in to unlock AI-powered explanations and quizzes"),
+    ).toBeVisible();
+    await expect(
+      page.getByText("A quiz question tailored to your mastery level will appear here."),
+    ).toBeVisible();
+    await expect(page.getByText("Question 1 of 5")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry missed" })).toHaveCount(0);
   });
 
   test("Knowledge Matrix link opens the matrix", async ({ page }) => {

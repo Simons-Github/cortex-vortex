@@ -187,7 +187,7 @@ function CreateTopicCard({ isAuthed }: { isAuthed: boolean }) {
           </span>
           <span className="text-sm font-medium text-foreground">Create new topic</span>
           <span className="text-xs text-muted-foreground">
-            Generate a quiz on anything you want to learn
+            Start a 5-question round on anything you want to learn
           </span>
         </button>
       }

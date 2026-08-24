@@ -83,6 +83,7 @@ function Dashboard() {
             <Link
               to="/study/$topicId"
               params={{ topicId: nextTopicId }}
+              search={{ tab: "quiz" }}
               className="rounded-xl border border-zinc-700 bg-zinc-200 px-8 py-3 text-sm font-medium text-black transition-colors hover:bg-zinc-100"
             >
               Start Quiz

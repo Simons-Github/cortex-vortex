@@ -11,15 +11,18 @@
  *    renders from mock-data. Those values must never be written to
  *    localStorage or merged into Supabase on first login.
  *
- * All writes go through `incrementMastery`/`touchStreak` here, which apply
- * an optimistic local update immediately and then reconcile with the
- * authoritative row returned by Supabase once the RPC resolves. Writes always
- * start from a stored score or 0 — never from the decorative demo baseline.
+ * Quiz answers go through `applyQuizResult` (server picks the delta via
+ * `apply_quiz_result`; local mode uses the same `quizMasteryDelta` table).
+ * Login-merge and other arbitrary bumps still use `incrementMastery`.
+ * Both apply an optimistic local update immediately and then reconcile with
+ * the authoritative row returned by Supabase. Writes always start from a
+ * stored score or 0 — never from the decorative demo baseline.
  */
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import {
+  applyTopicQuizResult,
   getProfile,
   getTopicMastery,
   incrementTopicMastery,
@@ -28,6 +31,7 @@ import {
   type Profile,
   type TopicMastery,
 } from "@/lib/supabase";
+import { quizMasteryDelta } from "@/lib/quiz-mastery";
 import {
   clearLocalMastery,
   clearLocalStreak,
@@ -251,6 +255,66 @@ export function useMasteryStore() {
     [mode, user, remoteMasteryByTopic, queryClient, localState.mastery],
   );
 
+  /**
+   * One quiz answer. Synced mode sends only `correct` and lets
+   * `apply_quiz_result` choose the delta; local mode uses `quizMasteryDelta`
+   * so demo / signed-out progress matches after a login merge.
+   */
+  const applyQuizResult = useCallback(
+    async (
+      topicId: string,
+      correct: boolean,
+      fallbackBaseline = 0,
+    ): Promise<{ score: number; delta: number }> => {
+      const previous =
+        mode === "synced"
+          ? (remoteMasteryByTopic[topicId] ?? fallbackBaseline)
+          : (localState.mastery[topicId] ?? fallbackBaseline);
+      const predicted = quizMasteryDelta(correct, previous);
+
+      if (mode === "synced" && user) {
+        const optimistic = clamp(previous + predicted);
+
+        queryClient.setQueryData<TopicMastery[]>([MASTERY_QUERY_KEY, user.id], (rows) => {
+          const list = rows ? [...rows] : [];
+          const idx = list.findIndex((r) => r.topic_id === topicId);
+          const existing = idx >= 0 ? list[idx] : undefined;
+          if (existing) {
+            list[idx] = { ...existing, mastery_score: optimistic };
+          } else {
+            list.push({
+              id: `optimistic-${topicId}`,
+              user_id: user.id,
+              topic_id: topicId,
+              mastery_score: optimistic,
+              last_reviewed_at: new Date().toISOString(),
+            });
+          }
+          return list;
+        });
+
+        try {
+          const row = await applyTopicQuizResult(topicId, correct);
+          queryClient.setQueryData<TopicMastery[]>([MASTERY_QUERY_KEY, user.id], (rows) => {
+            const list = rows ? [...rows] : [];
+            const idx = list.findIndex((r) => r.topic_id === topicId);
+            if (idx >= 0) list[idx] = row;
+            else list.push(row);
+            return list;
+          });
+          return { score: row.mastery_score, delta: row.mastery_score - previous };
+        } catch (error) {
+          queryClient.invalidateQueries({ queryKey: [MASTERY_QUERY_KEY, user.id] });
+          throw error;
+        }
+      }
+
+      const score = setLocalTopicMastery(topicId, previous + predicted);
+      return { score, delta: score - previous };
+    },
+    [mode, user, remoteMasteryByTopic, queryClient, localState.mastery],
+  );
+
   const touchStreak = useCallback(async (): Promise<number> => {
     if (mode === "synced" && user) {
       try {
@@ -275,6 +339,7 @@ export function useMasteryStore() {
     streakCount,
     getMastery,
     incrementMastery,
+    applyQuizResult,
     touchStreak,
   };
 }
