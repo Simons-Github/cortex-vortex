@@ -55,8 +55,10 @@ export default defineConfig(({ mode, command }) => {
         importProtection: {
           behavior: "error",
           client: {
-            // `src/lib/gemini.ts` holds the GEMINI_API_KEY and the raw @google/genai
-            // client; it must only ever be reachable from src/server/** code.
+            // `src/lib/gemini.ts` holds GEMINI_API_KEY / per-request user keys and
+            // the raw @google/genai client. `src/server/**` holds AES-GCM, the
+            // service_role BYOK store, and token verification. None of that may
+            // reach the client bundle.
             files: ["**/server/**", "src/lib/gemini.ts"],
             specifiers: ["server-only"],
           },

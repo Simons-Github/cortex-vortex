@@ -10,8 +10,9 @@
 --      anyone who calls `/rpc/create_custom_topic` directly.
 --   2. Atomically reserves one slot from the shared daily pool of 5
 --      (explain + quiz + create_topic; advisory lock `ai_daily`, same
---      pattern as `try_log_ai_usage`).
---   3. Inserts the row only after the slot is reserved.
+--      pattern as `try_log_ai_usage`) — unless the caller has a BYOK row
+--      in `private.user_gemini_keys` (that table is not client-writable).
+--   3. Inserts the row only after the slot is reserved (or skipped).
 --
 -- `search_path` is locked to '' (same as increment_mastery / touch_streak)
 -- so every relation is schema-qualified and a malicious object in `public`
@@ -42,6 +43,7 @@ declare
   v_user_id uuid := auth.uid();
   v_title text;
   v_count integer;
+  v_has_own_key boolean := false;
   v_combined_limit constant integer := 5;
   result public.custom_topics;
 begin
@@ -66,27 +68,40 @@ begin
     raise exception 'invalid_level: must be beginner, intermediate, or advanced';
   end if;
 
-  -- Same lock key as `try_log_ai_usage` so mixed explain/quiz/create_topic
-  -- requests cannot race the shared pool of 5.
-  perform pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtext(v_user_id::text),
-    pg_catalog.hashtext('ai_daily')
-  );
-
-  select count(*)::integer into v_count
-  from public.ai_usage_log
-  where user_id = v_user_id
-    and endpoint in ('explain', 'quiz', 'create_topic')
-    and created_at > pg_catalog.now() - interval '24 hours';
-
-  if v_count >= v_combined_limit then
-    raise exception 'quota_exceeded'
-      using errcode = 'P0001',
-            hint = 'combined daily AI limit reached';
+  -- Presence of a BYOK row (written only by service_role RPCs) skips the
+  -- shared daily pool. to_regclass keeps this runnable before the BYOK
+  -- table exists.
+  if pg_catalog.to_regclass('private.user_gemini_keys') is not null then
+    select exists(
+      select 1
+      from private.user_gemini_keys k
+      where k.user_id = v_user_id
+    ) into v_has_own_key;
   end if;
 
-  insert into public.ai_usage_log (user_id, endpoint, ip_address)
-  values (v_user_id, 'create_topic', p_ip);
+  if not v_has_own_key then
+    -- Same lock key as `try_log_ai_usage` so mixed explain/quiz/create_topic
+    -- requests cannot race the shared pool of 5.
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtext(v_user_id::text),
+      pg_catalog.hashtext('ai_daily')
+    );
+
+    select count(*)::integer into v_count
+    from public.ai_usage_log
+    where user_id = v_user_id
+      and endpoint in ('explain', 'quiz', 'create_topic')
+      and created_at > pg_catalog.now() - interval '24 hours';
+
+    if v_count >= v_combined_limit then
+      raise exception 'quota_exceeded'
+        using errcode = 'P0001',
+              hint = 'combined daily AI limit reached';
+    end if;
+
+    insert into public.ai_usage_log (user_id, endpoint, ip_address)
+    values (v_user_id, 'create_topic', p_ip);
+  end if;
 
   insert into public.custom_topics (user_id, title, level)
   values (v_user_id, v_title, p_level)

@@ -1,31 +1,58 @@
 /**
- * Server-only Gemini client service. Reads GEMINI_API_KEY from process.env
- * (never a VITE_-prefixed variable) so the key can never end up in the
- * client bundle. This module must only be imported from `src/server/**`,
- * which is enforced by the `importProtection` rule in vite.config.ts.
+ * Server-only Gemini client service. The platform key is read from
+ * `GEMINI_API_KEY` (never a VITE_-prefixed variable). Per-user BYOK keys are
+ * passed in per request and never stored on the singleton client — caching a
+ * user key would leak it across requests. This module is blocked from the
+ * client bundle by `importProtection` in vite.config.ts.
  */
 import { GoogleGenAI, Type, type Schema } from "@google/genai";
 
 const GEMINI_MODEL = process.env["GEMINI_MODEL"]?.trim() || "gemini-3.6-flash";
 
-let cachedClient: GoogleGenAI | null = null;
+let cachedPlatformClient: GoogleGenAI | null = null;
 
-function getClient(): GoogleGenAI {
-  const apiKey = process.env["GEMINI_API_KEY"]?.trim();
-  if (!apiKey) {
+function getClient(apiKey?: string): GoogleGenAI {
+  const userKey = apiKey?.trim();
+  if (userKey) {
+    return new GoogleGenAI({ apiKey: userKey });
+  }
+
+  const platformKey = process.env["GEMINI_API_KEY"]?.trim();
+  if (!platformKey) {
     throw new Error(
       "GEMINI_API_KEY is not set on the server. Add it to a server-side .env file (see .env.example).",
     );
   }
-  if (!cachedClient) {
-    cachedClient = new GoogleGenAI({ apiKey });
+  if (!cachedPlatformClient) {
+    cachedPlatformClient = new GoogleGenAI({ apiKey: platformKey });
   }
-  return cachedClient;
+  return cachedPlatformClient;
 }
 
-/** Whether the server has a Gemini API key configured. Safe to expose to the client as a boolean. */
+/** Whether the server has a platform Gemini API key. Safe to expose as a boolean. */
 export function isGeminiConfigured(): boolean {
   return Boolean(process.env["GEMINI_API_KEY"]?.trim());
+}
+
+/**
+ * Cheap live check that `apiKey` authenticates with Gemini. A 429 / quota
+ * error still counts as valid (the key was accepted). Never logs the key.
+ */
+export async function verifyGeminiApiKey(apiKey: string): Promise<boolean> {
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: "ok",
+      config: { maxOutputTokens: 1, temperature: 0 },
+    });
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (/429|resource.?exhausted|quota/i.test(message)) return true;
+    console.error("Gemini API key verification failed.");
+    return false;
+  }
 }
 
 /**
@@ -71,8 +98,9 @@ export async function generateExplanation(
   level: string,
   userQuery: string,
   trustedContext?: string,
+  apiKey?: string,
 ): Promise<string> {
-  const ai = getClient();
+  const ai = getClient(apiKey);
 
   const response = await ai.models.generateContent({
     model: GEMINI_MODEL,
@@ -145,8 +173,9 @@ export async function generateQuizQuestion(
   topic: string,
   level: string,
   trustedContext?: string,
+  apiKey?: string,
 ): Promise<GeneratedQuizQuestion> {
-  const ai = getClient();
+  const ai = getClient(apiKey);
 
   const response = await ai.models.generateContent({
     model: GEMINI_MODEL,
@@ -228,8 +257,11 @@ const topicModerationSchema: Schema = {
  * Fails closed: any error, empty response, or malformed JSON is treated as
  * "not allowed" rather than silently letting an unvetted topic through.
  */
-export async function isTopicAllowed(title: string): Promise<TopicModerationResult> {
-  const ai = getClient();
+export async function isTopicAllowed(
+  title: string,
+  apiKey?: string,
+): Promise<TopicModerationResult> {
+  const ai = getClient(apiKey);
 
   try {
     const response = await ai.models.generateContent({

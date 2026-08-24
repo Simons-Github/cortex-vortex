@@ -11,6 +11,25 @@ import type { GeneratedQuizQuestion } from "@/lib/gemini";
 
 export type FallbackReason = "not-configured" | "rate-limited" | "api-error";
 
+export type UserGeminiKeyStatus = { configured: true; hint: string } | { configured: false };
+
+export type GeminiStatus = {
+  platformConfigured: boolean;
+  byokAvailable: boolean;
+  /** `null` when the caller is signed out (or the token is invalid). */
+  userKey: UserGeminiKeyStatus | null;
+};
+
+export type SaveUserGeminiKeyResult =
+  | { ok: true; hint: string }
+  | {
+      ok: false;
+      reason: "invalid-key" | "rate-limited" | "byok-unavailable" | "save-failed";
+    };
+
+export type DeleteUserGeminiKeyResult =
+  { ok: true } | { ok: false; reason: "byok-unavailable" | "delete-failed" };
+
 export type ExplainResponse =
   | { quotaExceeded: true; resetInHours: number }
   | { quotaExceeded?: false; text: string; fallback: boolean; reason?: FallbackReason };

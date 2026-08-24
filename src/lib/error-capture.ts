@@ -15,6 +15,17 @@ function record(error: unknown) {
 const CAUSE_DEPTH_LIMIT = 5;
 const DESCRIPTION_LENGTH_LIMIT = 8_000;
 
+const QUERY_KEY = /([?&](?:key|access_token|api_key|apikey)=)[^&\s"'\\]+/gi;
+const HEADER_KEY = /(x-goog-api-key["'\s:=]+)[A-Za-z0-9_-]{20,}/gi;
+const KEYISH = /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/g;
+
+export function redactSecrets(text: string): string {
+  return text
+    .replace(QUERY_KEY, "$1[REDACTED]")
+    .replace(HEADER_KEY, "$1[REDACTED]")
+    .replace(KEYISH, "[REDACTED]");
+}
+
 export function describeError(error: unknown): string {
   const parts: string[] = [];
   let current: unknown = error;
@@ -28,7 +39,7 @@ export function describeError(error: unknown): string {
     parts.push(`${label}${current.stack ?? `${current.name}: ${current.message}`}${status}`);
     current = current.cause;
   }
-  return parts.join("\n").slice(0, DESCRIPTION_LENGTH_LIMIT);
+  return redactSecrets(parts.join("\n")).slice(0, DESCRIPTION_LENGTH_LIMIT);
 }
 
 function describeStatus(error: Error): string {

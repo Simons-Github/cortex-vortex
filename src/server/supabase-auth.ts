@@ -58,6 +58,25 @@ function createUserScopedClient(accessToken: string): SupabaseClient | null {
 }
 
 /**
+ * Reserves one "save own Gemini key" slot (5 per rolling 10 minutes) via
+ * `try_log_key_save`. Returns `true` when reserved, `false` when at/over
+ * limit, `null` if Supabase isn't configured.
+ */
+export async function tryLogKeySave(
+  accessToken: string,
+  ipAddress: string | null,
+): Promise<boolean | null> {
+  const client = createUserScopedClient(accessToken);
+  if (!client) return null;
+
+  const { data, error } = await client.rpc("try_log_key_save", {
+    p_ip: ipAddress,
+  });
+  if (error) throw error;
+  return Boolean(data);
+}
+
+/**
  * Endpoints tracked by the `ai_usage_log` daily quota (see
  * `supabase/sql/ai_usage_log.sql` and `supabase/sql/custom_topics.sql`).
  * `topic_moderation` is logged for visibility only — it is never checked

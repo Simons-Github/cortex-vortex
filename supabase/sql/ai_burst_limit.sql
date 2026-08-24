@@ -21,7 +21,8 @@ alter table public.ai_usage_log
     'topic_moderation',
     'burst_explain',
     'burst_quiz',
-    'burst_create_topic'
+    'burst_create_topic',
+    'burst_save_key'
   ));
 
 -- 2. Atomic compare-and-insert for the short-window burst layer. Counts the

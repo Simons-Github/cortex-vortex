@@ -28,6 +28,36 @@ revoke all on function public.try_log_ai_usage(text, text, integer) from public;
 revoke all on function public.try_log_ai_usage(text, text, integer) from anon;
 grant execute on function public.try_log_ai_usage(text, text, integer) to authenticated;
 
+revoke all on function public.try_log_key_save(text) from public;
+revoke all on function public.try_log_key_save(text) from anon;
+grant execute on function public.try_log_key_save(text) to authenticated;
+
+-- BYOK privileged RPCs: service_role only (never anon/authenticated).
+revoke all on function public.service_require_role() from public;
+revoke all on function public.service_require_role() from anon;
+revoke all on function public.service_require_role() from authenticated;
+grant execute on function public.service_require_role() to service_role;
+
+revoke all on function public.service_upsert_user_gemini_key(uuid, text, text) from public;
+revoke all on function public.service_upsert_user_gemini_key(uuid, text, text) from anon;
+revoke all on function public.service_upsert_user_gemini_key(uuid, text, text) from authenticated;
+grant execute on function public.service_upsert_user_gemini_key(uuid, text, text) to service_role;
+
+revoke all on function public.service_load_user_gemini_key(uuid) from public;
+revoke all on function public.service_load_user_gemini_key(uuid) from anon;
+revoke all on function public.service_load_user_gemini_key(uuid) from authenticated;
+grant execute on function public.service_load_user_gemini_key(uuid) to service_role;
+
+revoke all on function public.service_hint_user_gemini_key(uuid) from public;
+revoke all on function public.service_hint_user_gemini_key(uuid) from anon;
+revoke all on function public.service_hint_user_gemini_key(uuid) from authenticated;
+grant execute on function public.service_hint_user_gemini_key(uuid) to service_role;
+
+revoke all on function public.service_delete_user_gemini_key(uuid) from public;
+revoke all on function public.service_delete_user_gemini_key(uuid) from anon;
+revoke all on function public.service_delete_user_gemini_key(uuid) from authenticated;
+grant execute on function public.service_delete_user_gemini_key(uuid) to service_role;
+
 -- 4. Fail closed if somehow invoked without a JWT (defense in depth).
 create or replace function public.increment_mastery(p_topic_id text, p_delta integer)
 returns public.user_topic_mastery

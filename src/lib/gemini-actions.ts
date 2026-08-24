@@ -10,9 +10,11 @@
  * holder). The browser only ever calls these functions over the network; it
  * never sees the key or talks to the Gemini API directly.
  *
- * Both endpoints fail closed: if GEMINI_API_KEY isn't set, the caller is
- * rate-limited, or the Gemini call throws, we fall back to the existing mock
- * data and set `fallback: true` so the client can surface a toast.
+ * Endpoints fail closed: if neither a user BYOK key nor GEMINI_API_KEY is
+ * available, the caller is rate-limited, or the Gemini call throws, we fall
+ * back to the existing mock data and set `fallback: true` so the client can
+ * surface a toast. A stored user key skips the shared daily quota of 5
+ * (that pool protects the platform key); burst limits still apply.
  *
  * Both endpoints also require a signed-in Supabase user — that check runs
  * first, before the mock/rate-limit/Gemini logic, and rejects with an error
@@ -29,6 +31,7 @@ import {
   generateQuizQuestion,
   isGeminiConfigured,
   isTopicAllowed,
+  verifyGeminiApiKey,
   type GeneratedQuizQuestion,
 } from "@/lib/gemini";
 import { consumeRateLimit } from "@/server/rate-limit";
@@ -39,19 +42,58 @@ import {
   insertCustomTopic,
   logAiUsage,
   tryLogAiUsage,
+  tryLogKeySave,
   type AiBurstEndpoint,
   type AiUsageEndpoint,
   type CustomTopicLevel,
   type CustomTopicRow,
 } from "@/server/supabase-auth";
-import type { CreateTopicResponse, ExplainResponse, QuizResponse } from "@/lib/gemini-types";
+import {
+  deleteUserGeminiKeyRow,
+  isByokAvailable,
+  loadDecryptedUserGeminiKey,
+  loadUserGeminiKeyHint,
+  upsertEncryptedUserGeminiKey,
+} from "@/server/user-gemini-keys";
+import type {
+  CreateTopicResponse,
+  DeleteUserGeminiKeyResult,
+  ExplainResponse,
+  GeminiStatus,
+  QuizResponse,
+  SaveUserGeminiKeyResult,
+} from "@/lib/gemini-types";
 
 export type {
   CreateTopicResponse,
+  DeleteUserGeminiKeyResult,
   ExplainResponse,
   FallbackReason,
+  GeminiStatus,
   QuizResponse,
+  SaveUserGeminiKeyResult,
+  UserGeminiKeyStatus,
 } from "@/lib/gemini-types";
+
+const GEMINI_KEY_PATTERN = /^[A-Za-z0-9_-]{20,200}$/;
+
+type ResolvedGeminiKey = { apiKey: string; source: "user" | "platform" };
+
+/**
+ * Prefer a decrypted BYOK key; otherwise the platform env key. Never logs
+ * key material. Decrypt failures fall through to the platform key.
+ */
+async function resolveGeminiKey(userId: string): Promise<ResolvedGeminiKey | null> {
+  try {
+    const userKey = await loadDecryptedUserGeminiKey(userId);
+    if (userKey) return { apiKey: userKey, source: "user" };
+  } catch {
+    console.error("Failed to load user Gemini key; falling back to platform key.");
+  }
+  const platform = process.env["GEMINI_API_KEY"]?.trim();
+  if (platform) return { apiKey: platform, source: "platform" };
+  return null;
+}
 
 const EXPLAIN_RATE_LIMIT = 20;
 const QUIZ_RATE_LIMIT = 30;
@@ -249,7 +291,8 @@ export const explainTopic = createServerFn({ method: "POST" })
     const topic = await resolveTopic(data.topicId, data.accessToken as string);
     const mockText = () => buildMockExplanation(topic, data.message);
 
-    if (!isGeminiConfigured()) {
+    const resolved = await resolveGeminiKey(user.id);
+    if (!resolved) {
       return { text: mockText(), fallback: true, reason: "not-configured" };
     }
 
@@ -257,12 +300,13 @@ export const explainTopic = createServerFn({ method: "POST" })
       return { text: mockText(), fallback: true, reason: "rate-limited" };
     }
 
-    // Reserve a daily slot only once the topic is valid and a Gemini call is
-    // about to be attempted (not for mock/rate-limit fallbacks, unknown ids,
-    // or over-quota probes — `try_log_ai_usage` inserts only when under limit).
-    const quota = await consumeDailyQuota(data.accessToken as string, "explain");
-    if (quota.exceeded) {
-      return { quotaExceeded: true, resetInHours: quota.resetInHours };
+    // Reserve a daily slot only for the platform key (the pool protects
+    // *our* Gemini bill). BYOK callers skip it; burst still applies.
+    if (resolved.source === "platform") {
+      const quota = await consumeDailyQuota(data.accessToken as string, "explain");
+      if (quota.exceeded) {
+        return { quotaExceeded: true, resetInHours: quota.resetInHours };
+      }
     }
 
     try {
@@ -274,7 +318,13 @@ export const explainTopic = createServerFn({ method: "POST" })
       const trustedContext = `Category: ${topic.category}. Summary: ${topic.summary}`;
       const variant: PromptVariant = data.variant;
       const userQuery = PROMPT_VARIANTS[variant](topic, data.message);
-      const text = await generateExplanation(topic.title, level, userQuery, trustedContext);
+      const text = await generateExplanation(
+        topic.title,
+        level,
+        userQuery,
+        trustedContext,
+        resolved.apiKey,
+      );
       return { text, fallback: false };
     } catch (error) {
       console.error("Gemini explain failed, falling back to mock data:", error);
@@ -324,7 +374,8 @@ export const generateQuiz = createServerFn({ method: "POST" })
     const topic = findTopic(data.topicId);
     const mockQuestion = () => pickMockQuizQuestion(topic);
 
-    if (!isGeminiConfigured()) {
+    const resolved = await resolveGeminiKey(user.id);
+    if (!resolved) {
       return { ...mockQuestion(), fallback: true, reason: "not-configured" };
     }
 
@@ -332,15 +383,22 @@ export const generateQuiz = createServerFn({ method: "POST" })
       return { ...mockQuestion(), fallback: true, reason: "rate-limited" };
     }
 
-    const quota = await consumeDailyQuota(data.accessToken as string, "quiz");
-    if (quota.exceeded) {
-      return { quotaExceeded: true, resetInHours: quota.resetInHours };
+    if (resolved.source === "platform") {
+      const quota = await consumeDailyQuota(data.accessToken as string, "quiz");
+      if (quota.exceeded) {
+        return { quotaExceeded: true, resetInHours: quota.resetInHours };
+      }
     }
 
     try {
       const level = levelFor(data.mastery);
       const trustedContext = `Category: ${topic.category}. Summary: ${topic.summary}`;
-      const question = await generateQuizQuestion(topic.title, level, trustedContext);
+      const question = await generateQuizQuestion(
+        topic.title,
+        level,
+        trustedContext,
+        resolved.apiKey,
+      );
       return { ...question, fallback: false };
     } catch (error) {
       console.error("Gemini quiz generation failed, falling back to mock data:", error);
@@ -382,13 +440,14 @@ async function logModerationEvent(accessToken: string): Promise<void> {
  * function below once it has already authenticated the caller. In order:
  *
  *  1. Read-only peek against the shared daily pool of 5 (no insert) so
- *     over-quota callers never reach moderation / Gemini.
- *  2. `isTopicAllowed` moderation pre-check (skipped, fail-open, only if
- *     Gemini isn't configured at all) — logged under `topic_moderation`
- *     for visibility, but never charged against its own quota.
+ *     over-quota callers never reach moderation / Gemini — skipped when the
+ *     caller has a BYOK key (the RPC also skips reserving a slot).
+ *  2. `isTopicAllowed` moderation pre-check (skipped only if no Gemini key
+ *     is available at all) — logged under `topic_moderation` for visibility,
+ *     but never charged against its own quota.
  *  3. `create_custom_topic` RPC: atomically reserves a `create_topic` slot
- *     (advisory lock) and inserts the row. Rejected topics never reach it;
- *     there is no client INSERT policy on `custom_topics`.
+ *     (advisory lock) unless a BYOK row exists, then inserts. Rejected
+ *     topics never reach it; there is no client INSERT policy on `custom_topics`.
  *  4. Generate the first quiz question for the new topic via the existing
  *     `generateQuizQuestion`, passing the custom title as the topic — this
  *     is the one Gemini call in this flow the moderation check above exists
@@ -401,24 +460,29 @@ async function logModerationEvent(accessToken: string): Promise<void> {
  * handler, below) already is one.
  */
 const generateTopicQuiz = createServerOnlyFn(async function generateTopicQuiz(
-  _userId: string,
+  userId: string,
   title: string,
   level: CustomTopicLevel,
   accessToken: string,
 ): Promise<CreateTopicResponse> {
+  const resolved = await resolveGeminiKey(userId);
+
   // Early read-only gate: reject over-quota probes before moderation work.
-  const peeked = await peekDailyQuota(accessToken);
-  if (peeked.exceeded) {
-    return { quotaExceeded: true, resetInHours: peeked.resetInHours };
+  // BYOK callers skip the shared pool (the RPC does the same at insert time).
+  if (resolved?.source !== "user") {
+    const peeked = await peekDailyQuota(accessToken);
+    if (peeked.exceeded) {
+      return { quotaExceeded: true, resetInHours: peeked.resetInHours };
+    }
   }
 
   // Extra server-side guard independent of the DB constraint (see
   // `supabase/sql/custom_topics.sql`) — never trust that a client validated this.
   const trimmedTitle = title.trim().slice(0, 80);
 
-  if (isGeminiConfigured()) {
+  if (resolved) {
     try {
-      const moderation = await isTopicAllowed(trimmedTitle);
+      const moderation = await isTopicAllowed(trimmedTitle, resolved.apiKey);
       void logModerationEvent(accessToken);
       if (!moderation.allowed) {
         return { rejected: true, reason: moderation.reason };
@@ -448,7 +512,7 @@ const generateTopicQuiz = createServerOnlyFn(async function generateTopicQuiz(
   const topicId = inserted.row.id;
   const fallbackQuestion = () => buildFallbackTopicQuestion(trimmedTitle);
 
-  if (!isGeminiConfigured()) {
+  if (!resolved) {
     return {
       success: true,
       topicId,
@@ -477,7 +541,12 @@ const generateTopicQuiz = createServerOnlyFn(async function generateTopicQuiz(
   }
 
   try {
-    const firstQuestion = await generateQuizQuestion(trimmedTitle, capitalize(level));
+    const firstQuestion = await generateQuizQuestion(
+      trimmedTitle,
+      capitalize(level),
+      undefined,
+      resolved.apiKey,
+    );
     return { success: true, topicId, firstQuestion, fallback: false };
   } catch (error) {
     console.error("Gemini quiz generation failed for a new custom topic, falling back:", error);
@@ -512,7 +581,107 @@ export const createCustomTopic = createServerFn({ method: "POST" })
     return generateTopicQuiz(user.id, data.title, data.level, data.accessToken as string);
   });
 
-/** Lets the UI show whether Gemini is configured server-side, without ever exposing the key. */
-export const getGeminiStatus = createServerFn({ method: "GET" }).handler(async () => {
-  return { configured: isGeminiConfigured() };
+/** Lets the UI show platform vs BYOK status without ever exposing a key. */
+export const getGeminiStatus = createServerFn({ method: "POST" })
+  .validator((input: unknown) =>
+    z.object({ accessToken: z.string().min(1).nullable() }).parse(input),
+  )
+  .handler(async ({ data }): Promise<GeminiStatus> => {
+    const platformConfigured = isGeminiConfigured();
+    const byokAvailable = isByokAvailable();
+
+    if (!data.accessToken) {
+      return { platformConfigured, byokAvailable, userKey: null };
+    }
+
+    const user = await getAuthenticatedUser(data.accessToken);
+    if (!user) {
+      return { platformConfigured, byokAvailable, userKey: null };
+    }
+
+    if (!byokAvailable) {
+      return { platformConfigured, byokAvailable, userKey: { configured: false } };
+    }
+
+    try {
+      const hint = await loadUserGeminiKeyHint(user.id);
+      return {
+        platformConfigured,
+        byokAvailable,
+        userKey: hint ? { configured: true, hint } : { configured: false },
+      };
+    } catch {
+      console.error("Failed to load user Gemini key status.");
+      return { platformConfigured, byokAvailable, userKey: { configured: false } };
+    }
+  });
+
+const saveKeyInputSchema = z.object({
+  accessToken: z.string().min(1).nullable(),
+  apiKey: z.string().max(400),
 });
+
+export const saveUserGeminiKey = createServerFn({ method: "POST" })
+  .validator((input: unknown) => saveKeyInputSchema.parse(input))
+  .handler(async ({ data }): Promise<SaveUserGeminiKeyResult> => {
+    const user = await getAuthenticatedUser(data.accessToken);
+    if (!user) {
+      throw new UnauthenticatedError();
+    }
+    if (!isByokAvailable()) {
+      return { ok: false, reason: "byok-unavailable" };
+    }
+
+    const apiKey = data.apiKey.trim();
+    if (!GEMINI_KEY_PATTERN.test(apiKey)) {
+      return { ok: false, reason: "invalid-key" };
+    }
+
+    let reserved: boolean | null;
+    try {
+      reserved = await tryLogKeySave(data.accessToken as string, getClientIp());
+    } catch {
+      console.error("try_log_key_save failed, failing closed.");
+      return { ok: false, reason: "save-failed" };
+    }
+    if (reserved !== true) {
+      return { ok: false, reason: reserved === false ? "rate-limited" : "save-failed" };
+    }
+
+    const valid = await verifyGeminiApiKey(apiKey);
+    if (!valid) {
+      return { ok: false, reason: "invalid-key" };
+    }
+
+    try {
+      const hint = await upsertEncryptedUserGeminiKey(user.id, apiKey);
+      return { ok: true, hint };
+    } catch {
+      console.error("Failed to persist user Gemini key.");
+      return { ok: false, reason: "save-failed" };
+    }
+  });
+
+const deleteKeyInputSchema = z.object({
+  accessToken: z.string().min(1).nullable(),
+});
+
+export const deleteUserGeminiKey = createServerFn({ method: "POST" })
+  .validator((input: unknown) => deleteKeyInputSchema.parse(input))
+  .handler(async ({ data }): Promise<DeleteUserGeminiKeyResult> => {
+    const user = await getAuthenticatedUser(data.accessToken);
+    if (!user) {
+      throw new UnauthenticatedError();
+    }
+    if (!isByokAvailable()) {
+      return { ok: false, reason: "byok-unavailable" };
+    }
+
+    try {
+      await deleteUserGeminiKeyRow(user.id);
+      return { ok: true };
+    } catch {
+      console.error("Failed to delete user Gemini key.");
+      return { ok: false, reason: "delete-failed" };
+    }
+  });
