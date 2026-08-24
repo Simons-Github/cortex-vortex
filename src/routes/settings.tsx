@@ -176,8 +176,9 @@ function SettingsPage() {
           ) : !byokAvailable ? (
             <p className="mt-5 text-sm text-muted-foreground">
               Bring-your-own-key isn&apos;t enabled on this server. The operator needs{" "}
-              <code className="rounded bg-zinc-800 px-1 py-0.5">USER_KEY_ENCRYPTION_SECRET</code> and{" "}
-              <code className="rounded bg-zinc-800 px-1 py-0.5">SUPABASE_SERVICE_ROLE_KEY</code>.
+              <code className="rounded bg-zinc-800 px-1 py-0.5">USER_KEY_ENCRYPTION_SECRET</code>{" "}
+              and <code className="rounded bg-zinc-800 px-1 py-0.5">SUPABASE_SERVICE_ROLE_KEY</code>
+              .
             </p>
           ) : (
             <form

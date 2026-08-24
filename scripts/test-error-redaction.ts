@@ -16,10 +16,7 @@ ok(error.message.includes("AIzaSyFAKEKEY1234567890abcdef"), "original error.mess
 const described = describeError(error);
 ok(!described.includes("AIzaSyFAKEKEY"), "describeError must not leak the Gemini key");
 ok(described.includes("Gemini request failed:"), "the rest of the message stays readable");
-ok(
-  described.includes("generativelanguage.googleapis.com"),
-  "the request URL host stays readable",
-);
+ok(described.includes("generativelanguage.googleapis.com"), "the request URL host stays readable");
 match(described, /\?key=\[REDACTED\]/, "query-string key values are replaced in place");
 
 strictEqual(
