@@ -84,4 +84,28 @@ test.describe("Study Room", () => {
     await expect(page.getByText("Couldn't find that topic.")).toBeVisible();
     await expect(page.getByRole("link", { name: "Knowledge Matrix" })).toBeVisible();
   });
+
+  test("daily quota lock does not break the signed-out study or matrix path", async ({ page }) => {
+    await page.goto("/matrix");
+    await waitForHydration(page);
+    await page.evaluate(() => {
+      localStorage.setItem(
+        "cortex-vortex:quota-reset-at:daily",
+        String(Date.now() + 60 * 60 * 1000),
+      );
+    });
+
+    await page.goto("/study/algorithms?tab=quiz");
+    await expect(page.getByRole("heading", { name: "Algorithms & Data Structures" })).toBeVisible();
+    await waitForHydration(page);
+    await expect(
+      page.getByText("Sign in to unlock AI-powered explanations and quizzes"),
+    ).toBeVisible();
+    await expect(page.getByText("You've used up today's AI quota.")).toHaveCount(0);
+
+    await page.goto("/matrix");
+    await expect(page.getByRole("heading", { name: "Knowledge Matrix" })).toBeVisible();
+    await waitForHydration(page);
+    await expect(page.getByText("Sign in to create your own custom topics")).toBeVisible();
+  });
 });

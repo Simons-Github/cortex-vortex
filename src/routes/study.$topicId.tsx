@@ -27,6 +27,7 @@ import { levelFor, topics, type ChatTurn, type Topic } from "@/lib/mock-data";
 import { explainTopic, generateQuiz } from "@/lib/gemini-actions";
 import { DAILY_QUOTA_TOAST, QUIZ_SESSION_SIZE, type FallbackReason } from "@/lib/gemini-types";
 import type { GeneratedQuizQuestion } from "@/lib/gemini";
+import { useDailyQuotaLock } from "@/lib/daily-quota-lock";
 import { useMasteryStore } from "@/lib/mastery-store";
 import { formatMasteryDelta, quizMasteryDelta } from "@/lib/quiz-mastery";
 import { clearStoredFirstQuestion, readStoredFirstQuestion } from "@/lib/quiz-preload";
@@ -110,44 +111,6 @@ function QuotaExceededOverlay() {
       <p className="max-w-xs text-sm text-foreground">{QUOTA_TOAST_MESSAGE}</p>
     </div>
   );
-}
-
-const QUOTA_RESET_KEY = "cortex-vortex:quota-reset-at:daily";
-const QUOTA_LOCK_EVENT = "cortex-vortex:daily-quota-locked";
-
-/** Reads a still-active combined-quota reset time, clearing any stale one. */
-function readStoredQuotaResetAt(): number | null {
-  if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(QUOTA_RESET_KEY);
-  const resetAt = raw ? Number(raw) : NaN;
-  if (!Number.isFinite(resetAt) || resetAt <= Date.now()) {
-    window.localStorage.removeItem(QUOTA_RESET_KEY);
-    return null;
-  }
-  return resetAt;
-}
-
-/** Persists the combined daily-quota lock so explain, quiz, and create-topic stay in sync. */
-function storeQuotaResetAt(resetInHours: number): number {
-  const resetAt = Date.now() + resetInHours * 60 * 60 * 1000;
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(QUOTA_RESET_KEY, String(resetAt));
-    window.dispatchEvent(new Event(QUOTA_LOCK_EVENT));
-  }
-  return resetAt;
-}
-
-function useDailyQuotaLock() {
-  const [quotaResetAt, setQuotaResetAt] = useState<number | null>(readStoredQuotaResetAt);
-  useEffect(() => {
-    const sync = () => setQuotaResetAt(readStoredQuotaResetAt());
-    window.addEventListener(QUOTA_LOCK_EVENT, sync);
-    return () => window.removeEventListener(QUOTA_LOCK_EVENT, sync);
-  }, []);
-  return {
-    quotaExceeded: quotaResetAt !== null,
-    lockQuota: (resetInHours: number) => setQuotaResetAt(storeQuotaResetAt(resetInHours)),
-  };
 }
 
 /** Shown in place of the study room while a custom topic is still being looked up, or once confirmed missing. */
@@ -561,6 +524,7 @@ function QuizRecap({
   loading,
   hasRetries,
   missed,
+  quotaExceeded,
   onAgain,
   onRetryMissed,
   onStudy,
@@ -571,6 +535,7 @@ function QuizRecap({
   loading: boolean;
   hasRetries: boolean;
   missed: { q: GeneratedQuizQuestion; i: number; picked: number }[];
+  quotaExceeded: boolean;
   onAgain: () => void;
   onRetryMissed: () => void;
   onStudy: () => void;
@@ -646,7 +611,7 @@ function QuizRecap({
         <button
           type="button"
           onClick={onAgain}
-          disabled={loading}
+          disabled={loading || quotaExceeded}
           className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-secondary px-4 py-2 text-sm text-foreground transition-colors hover:bg-zinc-800 disabled:opacity-40"
         >
           {loading ? (
@@ -657,6 +622,9 @@ function QuizRecap({
           Another round
         </button>
       </div>
+      {quotaExceeded ? (
+        <p className="mt-3 text-right text-xs text-muted-foreground">{QUOTA_TOAST_MESSAGE}</p>
+      ) : null}
     </div>
   );
 }
@@ -710,6 +678,7 @@ function QuizTab({
   };
 
   const loadQuestions = (seeded: GeneratedQuizQuestion[], mode: "fill" | "replace") => {
+    if (quotaExceeded) return;
     const needed = QUIZ_SESSION_SIZE - seeded.length;
     if (needed <= 0) {
       setLoading(false);
@@ -907,6 +876,7 @@ function QuizTab({
         loading={loading}
         hasRetries={segmentStart > 0}
         missed={latestMissed}
+        quotaExceeded={quotaExceeded}
         onAgain={() => loadQuestions([], "replace")}
         onRetryMissed={retryMissed}
         onStudy={onReviewExplanation}
@@ -928,7 +898,8 @@ function QuizTab({
             <button
               type="button"
               onClick={() => loadQuestions([], "fill")}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+              disabled={quotaExceeded}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
             >
               Try again
             </button>

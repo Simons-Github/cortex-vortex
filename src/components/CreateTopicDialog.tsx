@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Loader2, Sparkles } from "lucide-react";
+import { Loader2, Lock, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -11,6 +11,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
+import { useDailyQuotaLock } from "@/lib/daily-quota-lock";
 import { createCustomTopic } from "@/lib/gemini-actions";
 import { DAILY_QUOTA_TOAST } from "@/lib/gemini-types";
 import { storeFirstQuestion } from "@/lib/quiz-preload";
@@ -52,6 +53,7 @@ function titleValidationError(trimmedTitle: string): string | null {
 export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
   const { session } = useAuth();
   const navigate = useNavigate();
+  const { quotaExceeded, lockQuota } = useDailyQuotaLock();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [level, setLevel] = useState<CustomTopicLevel>("beginner");
@@ -61,7 +63,10 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
   const trimmedTitle = title.trim();
   const titleError = titleValidationError(trimmedTitle);
   const canSubmit =
-    trimmedTitle.length >= TITLE_MIN_LENGTH && trimmedTitle.length <= TITLE_MAX_LENGTH && !loading;
+    !quotaExceeded &&
+    trimmedTitle.length >= TITLE_MIN_LENGTH &&
+    trimmedTitle.length <= TITLE_MAX_LENGTH &&
+    !loading;
 
   const reset = () => {
     setTitle("");
@@ -71,6 +76,10 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (quotaExceeded) {
+      toast.error(DAILY_QUOTA_TOAST);
+      return;
+    }
     if (!canSubmit || loading) return;
     setFormError(null);
     setLoading(true);
@@ -85,6 +94,7 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
       // `quotaExceeded: false`), so narrow with `in` rather than truthiness
       // checks on a property that may not exist on the other arms.
       if ("quotaExceeded" in result) {
+        lockQuota(result.resetInHours);
         setOpen(false);
         reset();
         toast.error(DAILY_QUOTA_TOAST);
@@ -130,61 +140,71 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
         <DialogHeader>
           <DialogTitle className="text-foreground">Create a custom topic</DialogTitle>
           <DialogDescription>
-            Gemini generates a 5-question round for any topic you name. Uses your combined daily AI
-            quota.
+            {quotaExceeded
+              ? "Custom topics use the same daily AI pool as explanations and quizzes."
+              : "Gemini generates a 5-question round for any topic you name. Uses your combined daily AI quota."}
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={submit} className="space-y-3">
-          <div>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              maxLength={TITLE_MAX_LENGTH}
-              placeholder="e.g. Quantum computing basics"
-              disabled={loading}
-              autoFocus
-              className={inputClass}
-            />
-            {titleError && <p className="mt-1.5 text-xs text-destructive">{titleError}</p>}
+        {quotaExceeded ? (
+          <div className="flex flex-col items-center gap-3 py-4 text-center">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background">
+              <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+            </span>
+            <p className="max-w-xs text-sm text-foreground">{DAILY_QUOTA_TOAST}</p>
           </div>
-
-          <div className="inline-flex w-full rounded-xl border border-border bg-background p-1">
-            {LEVEL_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setLevel(opt.value)}
+        ) : (
+          <form onSubmit={submit} className="space-y-3">
+            <div>
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={TITLE_MAX_LENGTH}
+                placeholder="e.g. Quantum computing basics"
                 disabled={loading}
-                className={`flex-1 rounded-lg px-3 py-1.5 text-xs transition-colors ${
-                  level === opt.value
-                    ? "bg-secondary text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+                autoFocus
+                className={inputClass}
+              />
+              {titleError && <p className="mt-1.5 text-xs text-destructive">{titleError}</p>}
+            </div>
 
-          {formError && <p className="text-xs text-destructive">{formError}</p>}
+            <div className="inline-flex w-full rounded-xl border border-border bg-background p-1">
+              {LEVEL_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setLevel(opt.value)}
+                  disabled={loading}
+                  className={`flex-1 rounded-lg px-3 py-1.5 text-xs transition-colors ${
+                    level === opt.value
+                      ? "bg-secondary text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
 
-          <button
-            type="submit"
-            disabled={!canSubmit}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-zinc-200 px-5 py-2.5 text-sm font-medium text-black hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating your topic…
-              </>
-            ) : (
-              <>
-                <Sparkles className="h-3.5 w-3.5" /> Create topic
-              </>
-            )}
-          </button>
-        </form>
+            {formError && <p className="text-xs text-destructive">{formError}</p>}
+
+            <button
+              type="submit"
+              disabled={!canSubmit}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-zinc-200 px-5 py-2.5 text-sm font-medium text-black hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating your topic…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-3.5 w-3.5" /> Create topic
+                </>
+              )}
+            </button>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );
