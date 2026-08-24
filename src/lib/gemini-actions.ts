@@ -29,6 +29,7 @@ import { levelFor, topics, type QuizQuestion, type Topic } from "@/lib/mock-data
 import {
   generateExplanation,
   generateQuizQuestion,
+  generateQuizQuestions,
   isGeminiConfigured,
   isTopicAllowed,
   verifyGeminiApiKey,
@@ -55,13 +56,14 @@ import {
   loadUserGeminiKeyHint,
   upsertEncryptedUserGeminiKey,
 } from "@/server/user-gemini-keys";
-import type {
-  CreateTopicResponse,
-  DeleteUserGeminiKeyResult,
-  ExplainResponse,
-  GeminiStatus,
-  QuizResponse,
-  SaveUserGeminiKeyResult,
+import {
+  QUIZ_SESSION_SIZE,
+  type CreateTopicResponse,
+  type DeleteUserGeminiKeyResult,
+  type ExplainResponse,
+  type GeminiStatus,
+  type QuizResponse,
+  type SaveUserGeminiKeyResult,
 } from "@/lib/gemini-types";
 
 export type {
@@ -228,15 +230,6 @@ async function resolveTopic(topicId: string, accessToken: string): Promise<Topic
   throw new Error(`Unknown topic: ${topicId}`);
 }
 
-/** Mock-catalog-only lookup — used by paths that do not yet support custom topic ids. */
-function findTopic(topicId: string): Topic {
-  const topic = findMockTopic(topicId);
-  if (!topic) {
-    throw new Error(`Unknown topic: ${topicId}`);
-  }
-  return topic;
-}
-
 const PROMPT_VARIANTS = {
   simplify: (topic: Topic) =>
     `Simplify your explanation of "${topic.title}". Use plainer language and one concrete analogy, assuming no prior background.`,
@@ -335,27 +328,60 @@ export const explainTopic = createServerFn({ method: "POST" })
 const quizInputSchema = z.object({
   topicId: z.string().min(1),
   mastery: z.number().min(0).max(100),
+  /** How many questions to generate (remaining slots in the current round). */
+  count: z.number().int().min(1).max(QUIZ_SESSION_SIZE).default(QUIZ_SESSION_SIZE),
+  /** Already-shown question stems this visit — skip near-duplicates. */
+  avoid: z.array(z.string().trim().min(1).max(500)).max(20).optional(),
   /** Caller's current Supabase `access_token`, re-verified server-side below. `null` when signed out. */
   accessToken: z.string().min(1).nullable(),
 });
 
-function pickMockQuizQuestion(topic: Topic): GeneratedQuizQuestion {
-  const pool: QuizQuestion[] = topic.quiz;
-  const q = pool[Math.floor(Math.random() * pool.length)];
-  if (!q) {
-    return {
-      question: `What is one key idea behind ${topic.title}?`,
-      options: [topic.summary, "Unrelated to this topic", "Not applicable", "None of the above"],
-      correctOptionIndex: 0,
-      explanation: topic.summary,
-    };
-  }
+/** Generic fallback when a custom topic has no static quiz pool to draw from. */
+function buildFallbackTopicQuestion(title: string): GeneratedQuizQuestion {
+  return {
+    question: `What is one key idea behind ${title}?`,
+    options: [
+      `A foundational concept in ${title}`,
+      "Unrelated to this topic",
+      "Not applicable",
+      "None of the above",
+    ],
+    correctOptionIndex: 0,
+    explanation: `This is a placeholder question — the AI quiz generator for "${title}" is temporarily unavailable.`,
+  };
+}
+
+function quizQuestionFromMock(q: QuizQuestion): GeneratedQuizQuestion {
   return {
     question: q.prompt,
     options: q.options,
     correctOptionIndex: q.correctIndex,
     explanation: q.explanation,
   };
+}
+
+function shuffleInPlace<T>(items: T[]): T[] {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const current = items[i]!;
+    items[i] = items[j]!;
+    items[j] = current;
+  }
+  return items;
+}
+
+function pickMockQuizQuestions(
+  topic: Topic,
+  count: number,
+  avoid: string[] = [],
+): GeneratedQuizQuestion[] {
+  const avoided = new Set(avoid.map((s) => s.trim().toLowerCase()));
+  const pool = shuffleInPlace(
+    topic.quiz.filter((q) => !avoided.has(q.prompt.trim().toLowerCase())).map(quizQuestionFromMock),
+  );
+  const picked = pool.slice(0, count);
+  if (picked.length > 0) return picked;
+  return [buildFallbackTopicQuestion(topic.title)];
 }
 
 /** Backend endpoint for dynamic quiz generation (equivalent to POST /api/gemini/quiz). */
@@ -369,18 +395,19 @@ export const generateQuiz = createServerFn({ method: "POST" })
 
     // `data.accessToken` can't be null here: getAuthenticatedUser() above
     // returns null (and throws) for a null token.
-    // Resolve the topic *before* reserving quota so an unknown id never burns
-    // a daily quiz credit.
-    const topic = findTopic(data.topicId);
-    const mockQuestion = () => pickMockQuizQuestion(topic);
+    // Resolve mock *or* caller-owned custom topic *before* reserving quota so
+    // an unknown / foreign id never burns a daily quiz credit.
+    const topic = await resolveTopic(data.topicId, data.accessToken as string);
+    const avoid = data.avoid ?? [];
+    const mockQuestions = () => pickMockQuizQuestions(topic, data.count, avoid);
 
     const resolved = await resolveGeminiKey(user.id);
     if (!resolved) {
-      return { ...mockQuestion(), fallback: true, reason: "not-configured" };
+      return { questions: mockQuestions(), fallback: true, reason: "not-configured" };
     }
 
     if (!(await consumeBurstLimit(data.accessToken as string, "quiz", QUIZ_RATE_LIMIT))) {
-      return { ...mockQuestion(), fallback: true, reason: "rate-limited" };
+      return { questions: mockQuestions(), fallback: true, reason: "rate-limited" };
     }
 
     if (resolved.source === "platform") {
@@ -393,36 +420,23 @@ export const generateQuiz = createServerFn({ method: "POST" })
     try {
       const level = levelFor(data.mastery);
       const trustedContext = `Category: ${topic.category}. Summary: ${topic.summary}`;
-      const question = await generateQuizQuestion(
+      const questions = await generateQuizQuestions(
         topic.title,
         level,
+        data.count,
         trustedContext,
+        avoid,
         resolved.apiKey,
       );
-      return { ...question, fallback: false };
+      return { questions, fallback: false };
     } catch (error) {
       console.error("Gemini quiz generation failed, falling back to mock data:", error);
-      return { ...mockQuestion(), fallback: true, reason: "api-error" };
+      return { questions: mockQuestions(), fallback: true, reason: "api-error" };
     }
   });
 
 function capitalize(s: string): string {
   return s.length ? s[0]!.toUpperCase() + s.slice(1) : s;
-}
-
-/** Generic first-question fallback for a custom topic — there's no static quiz pool to draw from. */
-function buildFallbackTopicQuestion(title: string): GeneratedQuizQuestion {
-  return {
-    question: `What is one key idea behind ${title}?`,
-    options: [
-      `A foundational concept in ${title}`,
-      "Unrelated to this topic",
-      "Not applicable",
-      "None of the above",
-    ],
-    correctOptionIndex: 0,
-    explanation: `This is a placeholder question — the AI quiz generator for "${title}" is temporarily unavailable.`,
-  };
 }
 
 /** Best-effort log of the moderation pre-check; never blocks or fails the creation flow. */

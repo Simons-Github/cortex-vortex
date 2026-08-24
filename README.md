@@ -118,7 +118,7 @@ No separate REST backend: UI and client logic live in the frontend; persistence 
 | Study Room — explanation chat | ✅ |
 | Study Room — adaptive quizzes | ✅ |
 | Knowledge Matrix (filter / search) | ✅ |
-| Custom topics (Gemini + moderation) | ✅ (quiz: first question only) |
+| Custom topics (Gemini + moderation) | ✅ (5-question quiz rounds) |
 | Login / sign-up (email) | ✅ |
 | Mastery sync (Supabase) + localStorage fallback | ✅ |
 | Streak tracking | ✅ |

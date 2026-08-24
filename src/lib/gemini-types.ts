@@ -1,13 +1,16 @@
 /**
- * Shared response/discriminated-union types for the Gemini-backed endpoints
- * in `src/lib/gemini-actions.ts`. This file has zero runtime imports — only
- * `import type` — so it is fully erased at build time. Client code (routes,
- * components) can safely import types from here without any risk of
- * pulling server-only code (e.g. `@tanstack/react-start/server`, or
- * `src/lib/gemini.ts`, which holds the GEMINI_API_KEY) into the client
- * bundle.
+ * Shared response/discriminated-union types (and a few client-safe constants)
+ * for the Gemini-backed endpoints in `src/lib/gemini-actions.ts`.
+ *
+ * Runtime values here are numbers/strings only — no server imports — so client
+ * code (routes, components) can import from this file without pulling
+ * `@tanstack/react-start/server` or `src/lib/gemini.ts` (GEMINI_API_KEY) into
+ * the browser bundle. Types from `@/lib/gemini` stay `import type` and erase.
  */
 import type { GeneratedQuizQuestion } from "@/lib/gemini";
+
+/** Questions per round — one Gemini call, one daily-quota slot. */
+export const QUIZ_SESSION_SIZE = 5;
 
 export type FallbackReason = "not-configured" | "rate-limited" | "api-error";
 
@@ -36,10 +39,12 @@ export type ExplainResponse =
 
 export type QuizResponse =
   | { quotaExceeded: true; resetInHours: number }
-  | ({ quotaExceeded?: false } & GeneratedQuizQuestion & {
-        fallback: boolean;
-        reason?: FallbackReason;
-      });
+  | {
+      quotaExceeded?: false;
+      questions: GeneratedQuizQuestion[];
+      fallback: boolean;
+      reason?: FallbackReason;
+    };
 
 export type CreateTopicResponse =
   | { quotaExceeded: true; resetInHours: number }

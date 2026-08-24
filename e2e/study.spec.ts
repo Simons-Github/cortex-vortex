@@ -29,6 +29,7 @@ test.describe("Study Room", () => {
     await expect(
       page.getByText("A quiz question tailored to your mastery level will appear here."),
     ).toBeVisible();
+    await expect(page.getByText("Question 1 of 5")).toBeVisible();
   });
 
   test("unknown topic shows a not-found state", async ({ page }) => {

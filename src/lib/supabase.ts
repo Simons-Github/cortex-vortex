@@ -157,9 +157,9 @@ const CUSTOM_TOPIC_DIFFICULTY: Record<CustomTopicLevel, Topic["difficulty"]> = {
  * Adapts a `custom_topics` row into the shape the rest of the app already
  * knows how to render as a `Topic`. There's no static quiz/resource/summary
  * content for a user-created topic (that's generated on demand by
- * `generateTopicQuiz`), so those fields start empty — a freshly created
- * topic always has at least its first AI-generated question available via
- * `createCustomTopic`, independent of this static shape.
+ * `generateQuiz` / `createCustomTopic`), so those fields start empty — a
+ * freshly created topic still ships its first question via `createCustomTopic`
+ * so the study room can render immediately.
  */
 function customTopicToMergedTopic(row: CustomTopic): MergedTopic {
   return {

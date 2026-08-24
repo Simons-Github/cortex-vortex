@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  Check,
   ChevronLeft,
   ChevronRight,
   FileText,
@@ -10,7 +11,9 @@ import {
   Lock,
   LogIn,
   Play,
+  RotateCcw,
   Sparkles,
+  X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { toast } from "sonner";
@@ -21,7 +24,7 @@ import { AuthDialog } from "@/components/AuthDialog";
 import { useAuth } from "@/lib/auth";
 import { levelFor, topics, type ChatTurn, type Topic } from "@/lib/mock-data";
 import { explainTopic, generateQuiz } from "@/lib/gemini-actions";
-import type { FallbackReason } from "@/lib/gemini-types";
+import { QUIZ_SESSION_SIZE, type FallbackReason } from "@/lib/gemini-types";
 import type { GeneratedQuizQuestion } from "@/lib/gemini";
 import { useMasteryStore } from "@/lib/mastery-store";
 import { getMergedTopics, type TopicSource } from "@/lib/supabase";
@@ -29,8 +32,7 @@ import { getMergedTopics, type TopicSource } from "@/lib/supabase";
 /**
  * Optional pre-generated first quiz question, attached to the URL when
  * navigating here straight from `CreateTopicDialog` — lets the quiz tab
- * render it immediately instead of calling `generateQuiz` again (which
- * wouldn't even work for a custom topic id — see `QuizTab` below).
+ * render question 1 immediately while `generateQuiz` fills the rest of the round.
  */
 const studySearchSchema = z.object({
   firstQuestion: z
@@ -308,11 +310,11 @@ function StudyRoomContent({
               ) : (
                 <QuizTab
                   topic={topic}
-                  source={source}
                   mastery={mastery}
                   setMastery={setMastery}
                   preloadedFirstQuestion={preloadedFirstQuestion}
                   preloadedFirstQuestionFallback={preloadedFirstQuestionFallback}
+                  onReviewExplanation={() => setTab("explanation")}
                 />
               )}
             </div>
@@ -375,12 +377,6 @@ function ExplanationTab({
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const { quotaExceeded, lockQuota } = useDailyQuotaLock();
-  // Unlike `QuizTab` (which skips `generateQuiz` for custom ids — that
-  // endpoint still only knows the mock catalog), explain *does* support
-  // custom topics: `explainTopic` resolves mock or caller-owned
-  // `custom_topics` rows server-side *before* logging quota. We still
-  // track `source` here so this tab stays consistent with the quiz path's
-  // custom/demo awareness and so a future client-side guard can reuse it.
   const isCustomTopic = source === "custom";
 
   const send = async (
@@ -389,7 +385,7 @@ function ExplanationTab({
   ) => {
     // Signed-out visitors never reach explainTopic — the UI is disabled for
     // them too, but this guard keeps it true even if that ever changes.
-    // Custom topics are allowed through (see `isCustomTopic` note above).
+    // Custom topics are allowed through (`explainTopic` resolves them server-side).
     if (!isAuthed || quotaExceeded) return;
     const trimmed = text.trim();
     if (!trimmed || loading) return;
@@ -526,58 +522,167 @@ function ExplanationTab({
   );
 }
 
+function appendUniqueQuestions(
+  existing: GeneratedQuizQuestion[],
+  incoming: GeneratedQuizQuestion[],
+): GeneratedQuizQuestion[] {
+  const seen = new Set(existing.map((q) => q.question.trim().toLowerCase()));
+  const extra: GeneratedQuizQuestion[] = [];
+  for (const q of incoming) {
+    const key = q.question.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    extra.push(q);
+  }
+  return [...existing, ...extra];
+}
+
+function QuizRecap({
+  questions,
+  answers,
+  gain,
+  loading,
+  onAgain,
+  onStudy,
+}: {
+  questions: GeneratedQuizQuestion[];
+  answers: Record<number, number>;
+  gain: number;
+  loading: boolean;
+  onAgain: () => void;
+  onStudy: () => void;
+}) {
+  const correctCount = questions.reduce(
+    (n, q, i) => n + (answers[i] === q.correctOptionIndex ? 1 : 0),
+    0,
+  );
+  const missed = questions
+    .map((q, i) => ({ q, i, picked: answers[i] }))
+    .filter(
+      (row): row is { q: GeneratedQuizQuestion; i: number; picked: number } =>
+        row.picked !== undefined && row.picked !== row.q.correctOptionIndex,
+    );
+
+  return (
+    <div className="rounded-2xl border border-border bg-[#121212] p-6">
+      <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Round complete</p>
+      <h2 className="mt-2 text-2xl font-light tracking-tight text-foreground">
+        {correctCount} / {questions.length} correct
+      </h2>
+      <p className={`mt-1 text-sm ${gain > 0 ? "text-foreground" : "text-muted-foreground"}`}>
+        +{gain}% mastery this round
+      </p>
+
+      {missed.length === 0 ? (
+        <p className="mt-5 text-sm text-muted-foreground">Clean sweep — nothing to review.</p>
+      ) : (
+        <ul className="mt-5 space-y-3">
+          {missed.map(({ q, i, picked }) => (
+            <li key={i} className="rounded-xl border border-border bg-background p-4">
+              <p className="text-sm text-foreground">{q.question}</p>
+              <p className="mt-2 flex items-start gap-1.5 text-xs text-destructive">
+                <X className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>You chose {q.options[picked]}</span>
+              </p>
+              <p className="mt-1 flex items-start gap-1.5 text-xs text-muted-foreground">
+                <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>Correct: {q.options[q.correctOptionIndex]}</span>
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <button
+          type="button"
+          onClick={onStudy}
+          disabled={loading}
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+        >
+          Review in explanation
+        </button>
+        <button
+          type="button"
+          onClick={onAgain}
+          disabled={loading}
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-secondary px-4 py-2 text-sm text-foreground transition-colors hover:bg-zinc-800 disabled:opacity-40"
+        >
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RotateCcw className="h-4 w-4" />
+          )}
+          Another round
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function QuizTab({
   topic,
-  source,
   mastery,
   setMastery,
   preloadedFirstQuestion,
   preloadedFirstQuestionFallback,
+  onReviewExplanation,
 }: {
   topic: Topic;
-  source: TopicSource;
   mastery: number;
   setMastery: (n: number) => void;
   preloadedFirstQuestion?: GeneratedQuizQuestion | undefined;
   preloadedFirstQuestionFallback?: boolean | undefined;
+  onReviewExplanation: () => void;
 }) {
   const { user, session } = useAuth();
   const isAuthed = Boolean(user);
   const { incrementMastery, touchStreak } = useMasteryStore();
-  // Seeded from `preloadedFirstQuestion` (set once, on mount) when this
-  // topic was just created via `CreateTopicDialog` — skips the initial
-  // `generateQuiz` call below entirely for question 0.
-  const [questions, setQuestions] = useState<Record<number, GeneratedQuizQuestion>>(() =>
-    preloadedFirstQuestion ? { 0: preloadedFirstQuestion } : {},
+  const [questions, setQuestions] = useState<GeneratedQuizQuestion[]>(() =>
+    preloadedFirstQuestion ? [preloadedFirstQuestion] : [],
   );
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [gain, setGain] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [phase, setPhase] = useState<"playing" | "recap">("playing");
   const { quotaExceeded, lockQuota } = useDailyQuotaLock();
-  const pendingRef = useRef<Set<number>>(new Set());
   const gainsRef = useRef<Record<number, number>>({});
-  // "Once per session" — touch_streak is idempotent per calendar day server-side anyway,
+  const fetchedRef = useRef(false);
+  const askedStemsRef = useRef<string[]>(
+    preloadedFirstQuestion ? [preloadedFirstQuestion.question] : [],
+  );
+  // "Once per visit" — touch_streak is idempotent per calendar day server-side anyway,
   // this just avoids firing the RPC/local update on every single answer.
   const streakTouchedRef = useRef(false);
-  // `generateQuiz` only knows how to look up the app's static demo topics —
-  // there's no "generate the next question" endpoint yet for a custom
-  // topic, so beyond the preloaded first question we simply stop rather
-  // than call an endpoint that would reject the id.
-  const isCustomTopic = source === "custom";
+  const accessToken = session?.access_token ?? null;
 
-  useEffect(() => {
-    // Signed-out visitors never reach generateQuiz — re-runs automatically
-    // (via the `isAuthed` dep below) once they sign in, unlocking in place.
-    // Once the daily quota is used up, stop fetching entirely — there's
-    // nothing more to show until the lock lifts.
-    if (!isAuthed || quotaExceeded || isCustomTopic) return;
-    if (questions[index] || pendingRef.current.has(index)) return;
-    pendingRef.current.add(index);
+  const rememberStems = (incoming: GeneratedQuizQuestion[]) => {
+    const have = new Set(askedStemsRef.current.map((s) => s.trim().toLowerCase()));
+    for (const q of incoming) {
+      const key = q.question.trim().toLowerCase();
+      if (have.has(key)) continue;
+      have.add(key);
+      askedStemsRef.current.push(q.question);
+    }
+  };
+
+  const loadQuestions = (seeded: GeneratedQuizQuestion[], mode: "fill" | "replace") => {
+    const needed = QUIZ_SESSION_SIZE - seeded.length;
+    if (needed <= 0) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
-
     generateQuiz({
-      data: { topicId: topic.id, mastery, accessToken: session?.access_token ?? null },
+      data: {
+        topicId: topic.id,
+        mastery,
+        count: needed,
+        avoid: askedStemsRef.current,
+        accessToken,
+      },
     })
       .then((result) => {
         if (result.quotaExceeded) {
@@ -585,28 +690,51 @@ function QuizTab({
           toast.error(QUOTA_TOAST_MESSAGE);
           return;
         }
-        const { fallback, reason, ...question } = result;
-        setQuestions((prev) => ({ ...prev, [index]: question }));
-        if (fallback) notifyFallback(reason);
+        rememberStems(result.questions);
+        const next = appendUniqueQuestions(seeded, result.questions).slice(0, QUIZ_SESSION_SIZE);
+        if (mode === "replace") {
+          setQuestions(next);
+          setIndex(0);
+          setAnswers({});
+          setGain(0);
+          gainsRef.current = {};
+          setPhase("playing");
+        } else {
+          setQuestions(next);
+        }
+        if (result.fallback) notifyFallback(result.reason);
       })
       .catch((error) => {
         console.error(error);
         toast.error("Couldn't reach the quiz generator.");
       })
       .finally(() => {
-        pendingRef.current.delete(index);
         setLoading(false);
       });
+  };
+
+  useEffect(() => {
+    // Signed-out visitors never reach generateQuiz — re-runs automatically
+    // (via the `isAuthed` dep below) once they sign in, unlocking in place.
+    // Once the daily quota is used up, stop fetching entirely — there's
+    // nothing more to show until the lock lifts.
+    if (!isAuthed || !accessToken || quotaExceeded || fetchedRef.current) return;
+    fetchedRef.current = true;
+    const seeded = preloadedFirstQuestion ? [preloadedFirstQuestion] : [];
+    loadQuestions(seeded, "fill");
     // topic.id is stable per mount; mastery intentionally excluded so an
-    // already-fetched question doesn't get replaced mid-session.
+    // already-fetched round doesn't get replaced mid-session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, topic.id, isAuthed, quotaExceeded, isCustomTopic]);
+  }, [topic.id, isAuthed, quotaExceeded, accessToken]);
 
   const q = questions[index];
   const selected = answers[index];
   const answered = selected !== undefined;
   const correct = q ? selected === q.correctOptionIndex : false;
   const questionGain = gainsRef.current[index] ?? 0;
+  const isLastLoaded = questions.length > 0 && index >= questions.length - 1;
+  const expectingMore = loading && questions.length < QUIZ_SESSION_SIZE;
+  const isRoundComplete = !loading && questions.length > 0 && isLastLoaded;
 
   const choose = (i: number) => {
     if (answered || !q) return;
@@ -642,8 +770,8 @@ function QuizTab({
       <div className="relative rounded-2xl border border-border bg-[#121212] p-6">
         <div className="pointer-events-none select-none opacity-40">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Question 1</span>
-            <span>+0% Mastery this session</span>
+            <span>Question 1 of {QUIZ_SESSION_SIZE}</span>
+            <span>+0% Mastery this round</span>
           </div>
           <h2 className="mt-4 text-lg font-light leading-snug text-foreground">
             A quiz question tailored to your mastery level will appear here.
@@ -666,13 +794,13 @@ function QuizTab({
     );
   }
 
-  if (quotaExceeded) {
+  if (quotaExceeded && questions.length === 0) {
     return (
       <div className="relative rounded-2xl border border-border bg-[#121212] p-6">
         <div className="pointer-events-none select-none opacity-40">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Question {index + 1}</span>
-            <span className={gain > 0 ? "text-foreground" : ""}>+{gain}% Mastery this session</span>
+            <span>Question 1 of {QUIZ_SESSION_SIZE}</span>
+            <span className={gain > 0 ? "text-foreground" : ""}>+{gain}% Mastery this round</span>
           </div>
           <h2 className="mt-4 text-lg font-light leading-snug text-foreground">
             You've used up today's AI quota.
@@ -695,28 +823,39 @@ function QuizTab({
     );
   }
 
-  if (!q) {
-    if (isCustomTopic) {
-      return (
-        <div className="flex min-h-[16rem] flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-[#121212] p-6 text-center">
-          <p className="text-sm text-foreground">
-            More questions for custom topics are coming soon.
-          </p>
-          <button
-            onClick={() => setIndex((i) => Math.max(0, i - 1))}
-            className="mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" /> Back to question 1
-          </button>
-        </div>
-      );
-    }
+  if (phase === "recap" && questions.length > 0) {
     return (
-      <div className="flex min-h-[16rem] items-center justify-center rounded-2xl border border-border bg-[#121212] p-6">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Generating your next question…
-        </div>
+      <QuizRecap
+        questions={questions}
+        answers={answers}
+        gain={gain}
+        loading={loading}
+        onAgain={() => loadQuestions([], "replace")}
+        onStudy={onReviewExplanation}
+      />
+    );
+  }
+
+  if (!q) {
+    return (
+      <div className="flex min-h-[16rem] flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-[#121212] p-6 text-center">
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Generating a {QUIZ_SESSION_SIZE}-question round…
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-foreground">Couldn't load this round.</p>
+            <button
+              type="button"
+              onClick={() => loadQuestions([], "fill")}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Try again
+            </button>
+          </>
+        )}
       </div>
     );
   }
@@ -724,12 +863,21 @@ function QuizTab({
   return (
     <div className="rounded-2xl border border-border bg-[#121212] p-6">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>Question {index + 1}</span>
-        <span className={gain > 0 ? "text-foreground" : ""}>+{gain}% Mastery this session</span>
+        <span>
+          Question {index + 1} of {expectingMore ? QUIZ_SESSION_SIZE : questions.length}
+        </span>
+        <span className={gain > 0 ? "text-foreground" : ""}>+{gain}% Mastery this round</span>
       </div>
 
-      {index === 0 && preloadedFirstQuestionFallback && (
-        <p className="mt-2 text-xs text-muted-foreground">Refining your first question…</p>
+      {expectingMore && (
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Preparing the rest of this round…
+        </p>
+      )}
+
+      {index === 0 && preloadedFirstQuestionFallback && !expectingMore && (
+        <p className="mt-2 text-xs text-muted-foreground">First question used a fallback prompt.</p>
       )}
 
       <h2 className="mt-4 text-lg font-light leading-snug text-foreground">{q.question}</h2>
@@ -747,7 +895,8 @@ function QuizTab({
                 : "border-border opacity-50";
           return (
             <button
-              key={o}
+              key={`${index}-${i}`}
+              type="button"
               onClick={() => choose(i)}
               disabled={answered}
               className={`flex w-full items-center justify-between rounded-xl border bg-background px-4 py-3 text-left text-sm text-foreground transition-colors ${state}`}
@@ -755,6 +904,9 @@ function QuizTab({
               <span>{o}</span>
               {answered && isRight && (
                 <span className="text-xs text-muted-foreground">correct</span>
+              )}
+              {answered && isPicked && !isRight && (
+                <span className="text-xs text-destructive">your answer</span>
               )}
             </button>
           );
@@ -772,19 +924,29 @@ function QuizTab({
 
       <div className="mt-6 flex items-center justify-between">
         <button
+          type="button"
           onClick={() => setIndex((i) => Math.max(0, i - 1))}
-          disabled={index === 0 || loading}
+          disabled={index === 0}
           className="inline-flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
         >
           <ChevronLeft className="h-4 w-4" /> Previous
         </button>
         <button
-          onClick={() => setIndex((i) => i + 1)}
-          disabled={loading}
+          type="button"
+          onClick={() => {
+            if (isRoundComplete) {
+              setPhase("recap");
+              return;
+            }
+            setIndex((i) => i + 1);
+          }}
+          disabled={!answered || (isLastLoaded && expectingMore)}
           className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-secondary px-4 py-2 text-sm text-foreground transition-colors hover:bg-zinc-800 disabled:opacity-40"
         >
-          {loading ? (
+          {isLastLoaded && expectingMore ? (
             <Loader2 className="h-4 w-4 animate-spin" />
+          ) : isRoundComplete ? (
+            "See results"
           ) : (
             <>
               Next <ChevronRight className="h-4 w-4" />

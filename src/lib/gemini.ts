@@ -136,7 +136,7 @@ export type GeneratedQuizQuestion = {
   explanation: string;
 };
 
-const quizResponseSchema: Schema = {
+const quizQuestionSchema: Schema = {
   type: Type.OBJECT,
   properties: {
     question: { type: Type.STRING, description: "The quiz question prompt." },
@@ -160,37 +160,99 @@ const quizResponseSchema: Schema = {
   propertyOrdering: ["question", "options", "correctOptionIndex", "explanation"],
 };
 
+function quizBatchSchema(count: number): Schema {
+  return {
+    type: Type.OBJECT,
+    properties: {
+      questions: {
+        type: Type.ARRAY,
+        items: quizQuestionSchema,
+        minItems: String(count),
+        maxItems: String(count),
+        description: `Exactly ${count} distinct quiz questions.`,
+      },
+    },
+    required: ["questions"],
+    propertyOrdering: ["questions"],
+  };
+}
+
+function parseQuizQuestion(value: unknown): GeneratedQuizQuestion {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    typeof (value as GeneratedQuizQuestion).question !== "string" ||
+    !(value as GeneratedQuizQuestion).question.trim() ||
+    !Array.isArray((value as GeneratedQuizQuestion).options) ||
+    (value as GeneratedQuizQuestion).options.length < 2 ||
+    !(value as GeneratedQuizQuestion).options.every((o) => typeof o === "string" && o.trim()) ||
+    typeof (value as GeneratedQuizQuestion).correctOptionIndex !== "number" ||
+    !Number.isInteger((value as GeneratedQuizQuestion).correctOptionIndex) ||
+    (value as GeneratedQuizQuestion).correctOptionIndex < 0 ||
+    (value as GeneratedQuizQuestion).correctOptionIndex >=
+      (value as GeneratedQuizQuestion).options.length ||
+    typeof (value as GeneratedQuizQuestion).explanation !== "string" ||
+    !(value as GeneratedQuizQuestion).explanation.trim()
+  ) {
+    throw new Error("Gemini returned a malformed quiz question.");
+  }
+  return value as GeneratedQuizQuestion;
+}
+
+function sanitizeAvoidedStems(stems: string[] | undefined): string[] {
+  if (!stems?.length) return [];
+  return stems
+    .map((s) => s.trim().slice(0, 200))
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
 /**
- * Generates a single multiple-choice quiz question via Gemini structured output
- * (responseMimeType: "application/json" + responseSchema), strictly typed as GeneratedQuizQuestion.
+ * Generates `count` distinct multiple-choice quiz questions via Gemini structured
+ * output. `count` must be 1–5 (one round / one quota slot).
  *
  * `topic` is the (potentially user-supplied) topic name and is always
  * wrapped and guarded against prompt injection — see `USER_TOPIC_GUARD`.
  * `trustedContext`, by contrast, is app-authored and never came from user
  * input, so it's passed through as plain trusted instruction text.
+ * `avoidStems` are already-shown question prompts to skip near-duplicates.
  */
-export async function generateQuizQuestion(
+export async function generateQuizQuestions(
   topic: string,
   level: string,
+  count: number,
   trustedContext?: string,
+  avoidStems?: string[],
   apiKey?: string,
-): Promise<GeneratedQuizQuestion> {
+): Promise<GeneratedQuizQuestion[]> {
+  if (!Number.isInteger(count) || count < 1 || count > 5) {
+    throw new Error("Quiz batch count must be between 1 and 5.");
+  }
+
   const ai = getClient(apiKey);
+  const avoided = sanitizeAvoidedStems(avoidStems);
+  const avoidClause = avoided.length
+    ? `Do not repeat or closely paraphrase these already-asked questions: ${avoided
+        .map((s) => `"${s}"`)
+        .join("; ")}.`
+    : "";
 
   const response = await ai.models.generateContent({
     model: GEMINI_MODEL,
     contents: [
       USER_TOPIC_GUARD,
-      `Write one multiple-choice quiz question about the topic named below, calibrated to a "${level}" learner.`,
+      `Write ${count} distinct multiple-choice quiz questions about the topic named below, calibrated to a "${level}" learner.`,
+      `Each question must cover a different aspect of the topic — do not paraphrase the same idea.`,
       `The topic is: ${wrapTopicName(topic)}.`,
       trustedContext ?? "",
-      `Provide exactly 4 options with only one correct answer, and a concise explanation of the correct answer.`,
+      avoidClause,
+      `For each question provide exactly 4 options with only one correct answer, and a concise explanation of the correct answer.`,
     ]
       .filter(Boolean)
       .join(" "),
     config: {
       responseMimeType: "application/json",
-      responseSchema: quizResponseSchema,
+      responseSchema: quizBatchSchema(count),
       temperature: 0.8,
     },
   });
@@ -200,30 +262,52 @@ export async function generateQuizQuestion(
     throw new Error("Gemini returned an empty quiz question.");
   }
 
-  let parsed: GeneratedQuizQuestion;
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw) as GeneratedQuizQuestion;
+    parsed = JSON.parse(raw) as unknown;
   } catch {
     throw new Error("Gemini returned invalid JSON for the quiz question.");
   }
 
-  if (
-    typeof parsed.question !== "string" ||
-    !parsed.question.trim() ||
-    !Array.isArray(parsed.options) ||
-    parsed.options.length < 2 ||
-    !parsed.options.every((o) => typeof o === "string" && o.trim()) ||
-    typeof parsed.correctOptionIndex !== "number" ||
-    !Number.isInteger(parsed.correctOptionIndex) ||
-    parsed.correctOptionIndex < 0 ||
-    parsed.correctOptionIndex >= parsed.options.length ||
-    typeof parsed.explanation !== "string" ||
-    !parsed.explanation.trim()
-  ) {
-    throw new Error("Gemini returned a malformed quiz question.");
+  const list =
+    parsed &&
+    typeof parsed === "object" &&
+    Array.isArray((parsed as { questions?: unknown }).questions)
+      ? (parsed as { questions: unknown[] }).questions
+      : null;
+  if (!list?.length) {
+    throw new Error("Gemini returned no quiz questions.");
   }
 
-  return parsed;
+  const questions = list.map(parseQuizQuestion);
+  if (questions.length < 1) {
+    throw new Error("Gemini returned a malformed quiz question.");
+  }
+  return questions.slice(0, count);
+}
+
+/**
+ * Generates a single multiple-choice quiz question. Used when creating a custom
+ * topic so the study room can render question 1 immediately.
+ */
+export async function generateQuizQuestion(
+  topic: string,
+  level: string,
+  trustedContext?: string,
+  apiKey?: string,
+): Promise<GeneratedQuizQuestion> {
+  const [question] = await generateQuizQuestions(
+    topic,
+    level,
+    1,
+    trustedContext,
+    undefined,
+    apiKey,
+  );
+  if (!question) {
+    throw new Error("Gemini returned an empty quiz question.");
+  }
+  return question;
 }
 
 export type TopicModerationResult = { allowed: boolean; reason: string };

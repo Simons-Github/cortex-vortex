@@ -46,7 +46,7 @@ function titleValidationError(trimmedTitle: string): string | null {
  * mirrors `AuthDialog`'s pattern (controls its own open state, trigger is
  * passed in). On success it navigates straight to the new topic's study
  * room with the already-generated first question attached, so the study
- * room never needs to call `generateQuiz` again for it.
+ * room can render question 1 immediately while `generateQuiz` fills the rest.
  */
 export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
   const { session } = useAuth();
@@ -128,7 +128,8 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
         <DialogHeader>
           <DialogTitle className="text-foreground">Create a custom topic</DialogTitle>
           <DialogDescription>
-            Gemini generates a full quiz for any topic you name — up to 3 per day.
+            Gemini generates a 5-question round for any topic you name. Uses your combined daily AI
+            quota.
           </DialogDescription>
         </DialogHeader>
 
