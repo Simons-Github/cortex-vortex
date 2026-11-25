@@ -22,16 +22,22 @@ import { z } from "zod";
 import { TopNav } from "@/components/TopNav";
 import { LiveMasteryBadge } from "@/components/LiveMasteryBadge";
 import { AuthDialog } from "@/components/AuthDialog";
+import { PdfTopicBadge, TopicPdfCard } from "@/components/TopicPdfCard";
 import { useAuth } from "@/lib/auth";
 import { levelFor, topics, type ChatTurn, type Topic } from "@/lib/mock-data";
-import { explainTopic, generateQuiz } from "@/lib/gemini-actions";
+import { explainTopic, generateQuiz, getGeminiStatus } from "@/lib/gemini-actions";
 import { DAILY_QUOTA_TOAST, QUIZ_SESSION_SIZE, type FallbackReason } from "@/lib/gemini-types";
 import type { GeneratedQuizQuestion } from "@/lib/gemini";
 import { useDailyQuotaLock } from "@/lib/daily-quota-lock";
 import { useMasteryStore } from "@/lib/mastery-store";
 import { formatMasteryDelta, quizMasteryDelta } from "@/lib/quiz-mastery";
 import { clearStoredFirstQuestion, readStoredFirstQuestion } from "@/lib/quiz-preload";
-import { getMergedTopics, logQuizAttempt, type TopicSource } from "@/lib/supabase";
+import {
+  getMergedTopics,
+  logQuizAttempt,
+  type TopicPdfMeta,
+  type TopicSource,
+} from "@/lib/supabase";
 
 const studySearchSchema = z.object({
   tab: z.enum(["explanation", "quiz"]).optional(),
@@ -113,6 +119,26 @@ function QuotaExceededOverlay() {
   );
 }
 
+/** Overlay when a PDF-backed topic needs the learner's own Gemini key. */
+function RequiresByokOverlay() {
+  return (
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-2xl bg-background/85 p-6 text-center backdrop-blur-sm">
+      <span className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-card">
+        <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+      </span>
+      <p className="max-w-xs text-sm text-foreground">
+        This topic uses a PDF source, which needs your own Gemini API key.
+      </p>
+      <Link
+        to="/settings"
+        className="inline-flex items-center gap-1.5 rounded-full bg-zinc-200 px-4 py-2 text-xs font-medium text-black transition-colors hover:bg-zinc-100"
+      >
+        Open Settings
+      </Link>
+    </div>
+  );
+}
+
 /** Shown in place of the study room while a custom topic is still being looked up, or once confirmed missing. */
 function TopicStatusScreen({ children }: { children: React.ReactNode }) {
   return (
@@ -168,6 +194,7 @@ function StudyRoom() {
   const customTopic = customTopicsQuery.data?.find((t) => t.id === params.topicId);
   const topic: Topic | undefined = demoTopic ?? customTopic;
   const source: TopicSource = demoTopic ? "demo" : "custom";
+  const pdf = customTopic?.pdf ?? null;
 
   if (!topic) {
     if (!demoTopic && isAuthed && customTopicsQuery.isLoading) {
@@ -182,16 +209,18 @@ function StudyRoom() {
     return <TopicStatusScreen>Couldn't find that topic.</TopicStatusScreen>;
   }
 
-  return <StudyRoomContent topic={topic} source={source} initialTab={search.tab} />;
+  return <StudyRoomContent topic={topic} source={source} pdf={pdf} initialTab={search.tab} />;
 }
 
 function StudyRoomContent({
   topic,
   source,
+  pdf,
   initialTab,
 }: {
   topic: Topic;
   source: TopicSource;
+  pdf: TopicPdfMeta | null;
   initialTab?: "explanation" | "quiz" | undefined;
 }) {
   const [storedFirst] = useState(() => readStoredFirstQuestion(topic.id));
@@ -205,9 +234,21 @@ function StudyRoomContent({
     clearStoredFirstQuestion(topic.id);
   }, [topic.id]);
 
+  const { user, session } = useAuth();
   const { getMastery, isLoading } = useMasteryStore();
   const [mastery, setMastery] = useState(() => getMastery(topic));
   const syncedInitialRef = useRef(false);
+
+  const geminiStatus = useQuery({
+    queryKey: ["gemini-status", session?.access_token ?? null],
+    queryFn: () => getGeminiStatus({ data: { accessToken: session?.access_token ?? null } }),
+    enabled: source === "custom" && Boolean(user),
+    staleTime: 60_000,
+  });
+  const needsByok =
+    source === "custom" &&
+    pdf?.status === "ready" &&
+    geminiStatus.data?.userKey?.configured === false;
 
   // Adopt the store's value once it has finished its initial load (synced
   // mode fetches over the network; local mode resolves immediately), but
@@ -240,6 +281,7 @@ function StudyRoomContent({
                   Custom
                 </span>
               )}
+              {pdf?.status === "ready" && <PdfTopicBadge />}
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
               {topic.category} · Last reviewed {topic.lastReviewed}
@@ -252,6 +294,8 @@ function StudyRoomContent({
             <LiveMasteryBadge score={mastery} />
           </div>
         </div>
+
+        {source === "custom" && <TopicPdfCard topicId={topic.id} pdf={pdf} />}
 
         <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_18rem]">
           <div>
@@ -273,7 +317,12 @@ function StudyRoomContent({
 
             <div className="mt-4">
               {tab === "explanation" ? (
-                <ExplanationTab topic={topic} source={source} mastery={mastery} />
+                <ExplanationTab
+                  topic={topic}
+                  source={source}
+                  mastery={mastery}
+                  needsByok={needsByok}
+                />
               ) : (
                 <QuizTab
                   topic={topic}
@@ -282,6 +331,7 @@ function StudyRoomContent({
                   preloadedFirstQuestion={preloadedFirstQuestion}
                   preloadedFirstQuestionFallback={preloadedFirstQuestionFallback}
                   onReviewExplanation={() => setTab("explanation")}
+                  needsByok={needsByok}
                 />
               )}
             </div>
@@ -333,10 +383,12 @@ function ExplanationTab({
   topic,
   source,
   mastery,
+  needsByok,
 }: {
   topic: Topic;
   source: TopicSource;
   mastery: number;
+  needsByok: boolean;
 }) {
   const { user, session } = useAuth();
   const isAuthed = Boolean(user);
@@ -353,7 +405,7 @@ function ExplanationTab({
     // Signed-out visitors never reach explainTopic — the UI is disabled for
     // them too, but this guard keeps it true even if that ever changes.
     // Custom topics are allowed through (`explainTopic` resolves them server-side).
-    if (!isAuthed || quotaExceeded) return;
+    if (!isAuthed || quotaExceeded || needsByok || needsByok) return;
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
@@ -372,7 +424,11 @@ function ExplanationTab({
           accessToken: session?.access_token ?? null,
         },
       });
-      if (result.quotaExceeded) {
+      if ("requiresByok" in result && result.requiresByok) {
+        toast.error("This PDF topic needs your own Gemini API key. Add one in Settings.");
+        return;
+      }
+      if ("quotaExceeded" in result && result.quotaExceeded) {
         lockQuota(result.resetInHours);
         setTurns((prev) => [
           ...prev,
@@ -440,15 +496,19 @@ function ExplanationTab({
 
       <div className="relative mt-6">
         <div
-          className={isAuthed && !quotaExceeded ? "" : "pointer-events-none select-none opacity-40"}
+          className={
+            isAuthed && !quotaExceeded && !needsByok
+              ? ""
+              : "pointer-events-none select-none opacity-40"
+          }
         >
           <div className="flex flex-wrap gap-2">
             {PROMPT_TAGS.map((p) => (
               <button
                 key={p.label}
                 onClick={() => send(p.label, p.variant)}
-                disabled={loading || !isAuthed || quotaExceeded}
-                tabIndex={isAuthed && !quotaExceeded ? undefined : -1}
+                disabled={loading || !isAuthed || quotaExceeded || needsByok}
+                tabIndex={isAuthed && !quotaExceeded && !needsByok ? undefined : -1}
                 className="rounded-full border border-border px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-zinc-600 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {p.label}
@@ -466,15 +526,15 @@ function ExplanationTab({
             <input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              disabled={loading || !isAuthed || quotaExceeded}
-              tabIndex={isAuthed && !quotaExceeded ? undefined : -1}
+              disabled={loading || !isAuthed || quotaExceeded || needsByok}
+              tabIndex={isAuthed && !quotaExceeded && !needsByok ? undefined : -1}
               placeholder="Ask about this topic"
               className="flex-1 rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-zinc-600 disabled:opacity-60"
             />
             <button
               type="submit"
-              disabled={loading || !isAuthed || quotaExceeded || !draft.trim()}
-              tabIndex={isAuthed && !quotaExceeded ? undefined : -1}
+              disabled={loading || !isAuthed || quotaExceeded || needsByok || !draft.trim()}
+              tabIndex={isAuthed && !quotaExceeded && !needsByok ? undefined : -1}
               className="inline-flex items-center gap-2 rounded-xl bg-zinc-200 px-5 py-2.5 text-sm font-medium text-black hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
@@ -483,7 +543,13 @@ function ExplanationTab({
           </form>
         </div>
 
-        {!isAuthed ? <SignInOverlay /> : quotaExceeded ? <QuotaExceededOverlay /> : null}
+        {!isAuthed ? (
+          <SignInOverlay />
+        ) : quotaExceeded ? (
+          <QuotaExceededOverlay />
+        ) : needsByok ? (
+          <RequiresByokOverlay />
+        ) : null}
       </div>
     </div>
   );
@@ -636,6 +702,7 @@ function QuizTab({
   preloadedFirstQuestion,
   preloadedFirstQuestionFallback,
   onReviewExplanation,
+  needsByok,
 }: {
   topic: Topic;
   mastery: number;
@@ -643,6 +710,7 @@ function QuizTab({
   preloadedFirstQuestion?: GeneratedQuizQuestion | undefined;
   preloadedFirstQuestionFallback?: boolean | undefined;
   onReviewExplanation: () => void;
+  needsByok: boolean;
 }) {
   const { user, session } = useAuth();
   const isAuthed = Boolean(user);
@@ -678,7 +746,7 @@ function QuizTab({
   };
 
   const loadQuestions = (seeded: GeneratedQuizQuestion[], mode: "fill" | "replace") => {
-    if (quotaExceeded) return;
+    if (quotaExceeded || needsByok) return;
     const needed = QUIZ_SESSION_SIZE - seeded.length;
     if (needed <= 0) {
       setLoading(false);
@@ -696,7 +764,11 @@ function QuizTab({
       },
     })
       .then((result) => {
-        if (result.quotaExceeded) {
+        if ("requiresByok" in result && result.requiresByok) {
+          toast.error("This PDF topic needs your own Gemini API key. Add one in Settings.");
+          return;
+        }
+        if ("quotaExceeded" in result && result.quotaExceeded) {
           lockQuota(result.resetInHours);
           toast.error(QUOTA_TOAST_MESSAGE);
           return;
@@ -730,14 +802,14 @@ function QuizTab({
     // (via the `isAuthed` dep below) once they sign in, unlocking in place.
     // Once the daily quota is used up, stop fetching entirely — there's
     // nothing more to show until the lock lifts.
-    if (!isAuthed || !accessToken || quotaExceeded || fetchedRef.current) return;
+    if (!isAuthed || !accessToken || quotaExceeded || needsByok || fetchedRef.current) return;
     fetchedRef.current = true;
     const seeded = preloadedFirstQuestion ? [preloadedFirstQuestion] : [];
     loadQuestions(seeded, "fill");
     // topic.id is stable per mount; mastery intentionally excluded so an
     // already-fetched round doesn't get replaced mid-session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic.id, isAuthed, quotaExceeded, accessToken]);
+  }, [topic.id, isAuthed, quotaExceeded, needsByok, accessToken]);
 
   const latestMissed = questions
     .slice(segmentStart)
@@ -836,7 +908,7 @@ function QuizTab({
     );
   }
 
-  if (quotaExceeded && questions.length === 0) {
+  if ((quotaExceeded || needsByok) && questions.length === 0) {
     return (
       <div className="relative rounded-2xl border border-border bg-[#121212] p-6">
         <div className="pointer-events-none select-none opacity-40">
@@ -847,7 +919,9 @@ function QuizTab({
             </span>
           </div>
           <h2 className="mt-4 text-lg font-light leading-snug text-foreground">
-            You've used up today's AI quota.
+            {needsByok
+              ? "This PDF topic needs your own Gemini API key."
+              : "You've used up today's AI quota."}
           </h2>
           <div className="mt-5 space-y-2.5">
             {["Option A", "Option B", "Option C", "Option D"].map((label) => (
@@ -862,7 +936,7 @@ function QuizTab({
           </div>
         </div>
 
-        <QuotaExceededOverlay />
+        {needsByok ? <RequiresByokOverlay /> : <QuotaExceededOverlay />}
       </div>
     );
   }

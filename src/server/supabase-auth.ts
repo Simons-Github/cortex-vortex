@@ -172,7 +172,7 @@ export async function tryLogAiUsage(
 }
 
 /** Endpoints that have a short-window burst cap (see `try_log_ai_burst`). */
-export type AiBurstEndpoint = "explain" | "quiz" | "create_topic";
+export type AiBurstEndpoint = "explain" | "quiz" | "create_topic" | "pdf_ingest";
 
 /**
  * Atomically reserves one burst-limit slot via `try_log_ai_burst`: counts the

@@ -30,13 +30,22 @@ import {
   generateExplanation,
   generateQuizQuestion,
   generateQuizQuestions,
+  ingestPdfStudyBrief,
   isGeminiConfigured,
   isTopicAllowed,
   missedStemsTrustedContext,
   verifyGeminiApiKey,
   type GeneratedQuizQuestion,
 } from "@/lib/gemini";
+import { pdfValidationMessage, TOPIC_PDF_MAX_PAGES, validatePdfBytes } from "@/lib/pdf";
 import { consumeRateLimit } from "@/server/rate-limit";
+import {
+  deleteTopicDocument,
+  deleteTopicPdfObject,
+  downloadTopicPdf,
+  loadTopicDocument,
+  upsertTopicDocument,
+} from "@/server/topic-documents";
 import {
   countAiUsage,
   getAuthenticatedUser,
@@ -64,7 +73,9 @@ import {
   type DeleteUserGeminiKeyResult,
   type ExplainResponse,
   type GeminiStatus,
+  type IngestTopicPdfResponse,
   type QuizResponse,
+  type RemoveTopicPdfResponse,
   type SaveUserGeminiKeyResult,
 } from "@/lib/gemini-types";
 
@@ -74,12 +85,16 @@ export type {
   ExplainResponse,
   FallbackReason,
   GeminiStatus,
+  IngestTopicPdfResponse,
   QuizResponse,
+  RemoveTopicPdfResponse,
   SaveUserGeminiKeyResult,
   UserGeminiKeyStatus,
 } from "@/lib/gemini-types";
 
-const GEMINI_KEY_PATTERN = /^[A-Za-z0-9_-]{20,200}$/;
+// Standard keys are `AIza…`. AI Studio now issues auth keys `AQ.…` (dot is
+// required). Character set is RFC 3986 unreserved; length matches the input cap.
+const GEMINI_KEY_PATTERN = /^[A-Za-z0-9._~-]{20,400}$/;
 
 type ResolvedGeminiKey = { apiKey: string; source: "user" | "platform" };
 
@@ -105,6 +120,7 @@ const QUIZ_RATE_LIMIT = 30;
 // explain/quiz (enforced by `try_log_ai_burst`, 60s rolling window). The
 // daily cap is the shared pool of 5 below, not a separate create-topic quota.
 const CREATE_TOPIC_RATE_LIMIT = 5;
+const PDF_INGEST_RATE_LIMIT = 3;
 
 /** Combined rolling-24h cap across explain + quiz + create_topic. Hardcoded in the RPCs too. */
 const DAILY_LIMIT_COMBINED = 5;
@@ -168,6 +184,16 @@ async function consumeDailyQuota(
     console.error(`try_log_ai_usage RPC failed for "${endpoint}", failing closed:`, error);
     throw new Error("Couldn't verify your daily AI quota right now. Please try again.");
   }
+}
+
+async function loadReadyStudyBrief(topicId: string, userId: string): Promise<string | null> {
+  try {
+    const row = await loadTopicDocument(topicId, userId);
+    if (row?.status === "ready" && row.study_brief?.trim()) return row.study_brief;
+  } catch (error) {
+    console.error("Failed to load topic document (non-fatal):", error);
+  }
+  return null;
 }
 
 /**
@@ -296,13 +322,22 @@ export const explainTopic = createServerFn({ method: "POST" })
     // an unknown / foreign id never burns a daily explain credit.
     const topic = await resolveTopic(data.topicId, data.accessToken as string);
     const mockText = () => buildMockExplanation(topic, data.message);
+    const studyBrief = await loadReadyStudyBrief(data.topicId, user.id);
 
     const resolved = await resolveGeminiKey(user.id);
+    if (studyBrief && resolved?.source !== "user") {
+      return { requiresByok: true };
+    }
     if (!resolved) {
       return { text: mockText(), fallback: true, reason: "not-configured" };
     }
 
     if (!(await consumeBurstLimit(data.accessToken as string, "explain", EXPLAIN_RATE_LIMIT))) {
+      if (studyBrief) {
+        throw new Error(
+          "Too many explanation requests just now. Please wait a minute and try again.",
+        );
+      }
       return { text: mockText(), fallback: true, reason: "rate-limited" };
     }
 
@@ -341,10 +376,12 @@ export const explainTopic = createServerFn({ method: "POST" })
         userQuery,
         trustedContext,
         resolved.apiKey,
+        studyBrief ?? undefined,
       );
       return { text, fallback: false };
     } catch (error) {
       console.error("Gemini explain failed, falling back to mock data:", error);
+      if (studyBrief) throw error;
       return { text: mockText(), fallback: true, reason: "api-error" };
     }
   });
@@ -424,13 +461,20 @@ export const generateQuiz = createServerFn({ method: "POST" })
     const topic = await resolveTopic(data.topicId, data.accessToken as string);
     const avoid = data.avoid ?? [];
     const mockQuestions = () => pickMockQuizQuestions(topic, data.count, avoid);
+    const studyBrief = await loadReadyStudyBrief(data.topicId, user.id);
 
     const resolved = await resolveGeminiKey(user.id);
+    if (studyBrief && resolved?.source !== "user") {
+      return { requiresByok: true };
+    }
     if (!resolved) {
       return { questions: mockQuestions(), fallback: true, reason: "not-configured" };
     }
 
     if (!(await consumeBurstLimit(data.accessToken as string, "quiz", QUIZ_RATE_LIMIT))) {
+      if (studyBrief) {
+        throw new Error("Too many quiz requests just now. Please wait a minute and try again.");
+      }
       return { questions: mockQuestions(), fallback: true, reason: "rate-limited" };
     }
 
@@ -457,10 +501,12 @@ export const generateQuiz = createServerFn({ method: "POST" })
         trustedContext,
         avoid,
         resolved.apiKey,
+        studyBrief ?? undefined,
       );
       return { questions, fallback: false };
     } catch (error) {
       console.error("Gemini quiz generation failed, falling back to mock data:", error);
+      if (studyBrief) throw error;
       return { questions: mockQuestions(), fallback: true, reason: "api-error" };
     }
   });
@@ -727,5 +773,197 @@ export const deleteUserGeminiKey = createServerFn({ method: "POST" })
     } catch {
       console.error("Failed to delete user Gemini key.");
       return { ok: false, reason: "delete-failed" };
+    }
+  });
+
+const ingestPdfInputSchema = z.object({
+  accessToken: z.string().min(1).nullable(),
+  topicId: z.string().uuid(),
+  fileName: z.string().trim().min(1).max(200),
+});
+
+function ingestReasonFromPdfError(
+  error: ReturnType<typeof validatePdfBytes>,
+): Extract<IngestTopicPdfResponse, { ok: false }>["reason"] {
+  if (error === "too-large") return "too-large";
+  if (error === "too-many-pages") return "too-many-pages";
+  return "invalid-pdf";
+}
+
+/** Ingest a PDF already uploaded to Storage for a custom topic. BYOK required. */
+export const ingestTopicPdf = createServerFn({ method: "POST" })
+  .validator((input: unknown) => ingestPdfInputSchema.parse(input))
+  .handler(async ({ data }): Promise<IngestTopicPdfResponse> => {
+    const user = await getAuthenticatedUser(data.accessToken);
+    if (!user) {
+      throw new UnauthenticatedError();
+    }
+
+    const accessToken = data.accessToken as string;
+    const topic = await getCustomTopicById(accessToken, data.topicId);
+    if (!topic) {
+      return { ok: false, reason: "not-found", message: "Couldn't find that custom topic." };
+    }
+
+    const userKey = await loadDecryptedUserGeminiKey(user.id);
+    if (!userKey) {
+      return {
+        ok: false,
+        reason: "no-byok",
+        message: "PDF sources require your own Gemini API key. Add one in Settings.",
+      };
+    }
+
+    if (!(await consumeBurstLimit(accessToken, "pdf_ingest", PDF_INGEST_RATE_LIMIT))) {
+      return {
+        ok: false,
+        reason: "rate-limited",
+        message: "Too many PDF uploads just now. Please wait a minute and try again.",
+      };
+    }
+
+    const bytes = await downloadTopicPdf(user.id, data.topicId);
+    if (!bytes) {
+      return { ok: false, reason: "not-found", message: "Couldn't find the uploaded PDF." };
+    }
+
+    const pdfError = validatePdfBytes(bytes, data.fileName);
+    if (pdfError) {
+      try {
+        await deleteTopicPdfObject(user.id, data.topicId);
+      } catch {
+        /* still report validation */
+      }
+      return {
+        ok: false,
+        reason: ingestReasonFromPdfError(pdfError),
+        message: pdfValidationMessage(pdfError),
+      };
+    }
+
+    let ingested;
+    try {
+      ingested = await ingestPdfStudyBrief(bytes, topic.title, userKey);
+    } catch (error) {
+      console.error("PDF ingest failed:", error);
+      return {
+        ok: false,
+        reason: "ingest-failed",
+        message: "Couldn't read this PDF right now. Please try again.",
+      };
+    }
+    const pages = ingested.pageCount;
+    if (pages !== null && pages > TOPIC_PDF_MAX_PAGES) {
+      try {
+        await deleteTopicPdfObject(user.id, data.topicId);
+      } catch {
+        /* ignore */
+      }
+      await upsertTopicDocument({
+        topicId: data.topicId,
+        userId: user.id,
+        fileName: data.fileName,
+        byteSize: bytes.byteLength,
+        pageCount: null,
+        status: "failed",
+        failureReason: "PDFs can have at most 20 pages.",
+        studyBrief: null,
+      });
+      return {
+        ok: false,
+        reason: "too-many-pages",
+        message: "PDFs can have at most 20 pages.",
+      };
+    }
+
+    if (!ingested.allowed) {
+      try {
+        await deleteTopicPdfObject(user.id, data.topicId);
+      } catch {
+        /* ignore */
+      }
+      await upsertTopicDocument({
+        topicId: data.topicId,
+        userId: user.id,
+        fileName: data.fileName,
+        byteSize: bytes.byteLength,
+        pageCount: pages,
+        status: "failed",
+        failureReason: ingested.reason,
+        studyBrief: null,
+      });
+      return { ok: false, reason: "rejected", message: ingested.reason };
+    }
+
+    try {
+      await upsertTopicDocument({
+        topicId: data.topicId,
+        userId: user.id,
+        fileName: data.fileName,
+        byteSize: bytes.byteLength,
+        pageCount: pages,
+        status: "ready",
+        failureReason: null,
+        studyBrief: ingested.studyBrief,
+      });
+    } catch (error) {
+      console.error("Failed to save topic document:", error);
+      return {
+        ok: false,
+        reason: "ingest-failed",
+        message: "Couldn't save this PDF right now. Please try again.",
+      };
+    }
+
+    let firstQuestion: GeneratedQuizQuestion | undefined;
+    try {
+      if (await consumeBurstLimit(accessToken, "quiz", QUIZ_RATE_LIMIT)) {
+        firstQuestion = await generateQuizQuestion(
+          topic.title,
+          capitalize(topic.level),
+          undefined,
+          userKey,
+          ingested.studyBrief,
+        );
+      }
+    } catch (error) {
+      console.error("Quiz generation after PDF ingest failed (topic still saved):", error);
+    }
+
+    return firstQuestion
+      ? { ok: true, fileName: data.fileName, pageCount: pages, firstQuestion }
+      : { ok: true, fileName: data.fileName, pageCount: pages };
+  });
+
+const removePdfInputSchema = z.object({
+  accessToken: z.string().min(1).nullable(),
+  topicId: z.string().uuid(),
+});
+
+/** Remove a topic PDF. Auth + ownership only — BYOK is not required. */
+export const removeTopicPdf = createServerFn({ method: "POST" })
+  .validator((input: unknown) => removePdfInputSchema.parse(input))
+  .handler(async ({ data }): Promise<RemoveTopicPdfResponse> => {
+    const user = await getAuthenticatedUser(data.accessToken);
+    if (!user) {
+      throw new UnauthenticatedError();
+    }
+
+    const topic = await getCustomTopicById(data.accessToken as string, data.topicId);
+    if (!topic) {
+      return { ok: false, reason: "not-found", message: "Couldn't find that custom topic." };
+    }
+
+    try {
+      await deleteTopicPdfObject(user.id, data.topicId);
+      await deleteTopicDocument(data.topicId, user.id);
+      return { ok: true };
+    } catch (error) {
+      console.error("Failed to remove topic PDF:", error);
+      return {
+        ok: false,
+        reason: "delete-failed",
+        message: "Couldn't remove this PDF. Please try again.",
+      };
     }
   });

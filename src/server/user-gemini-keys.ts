@@ -14,7 +14,7 @@ import {
 
 let serviceClient: SupabaseClient | null | undefined;
 
-function getServiceRoleClient(): SupabaseClient | null {
+export function getServiceRoleClient(): SupabaseClient | null {
   if (serviceClient !== undefined) return serviceClient;
 
   const url = import.meta.env.VITE_SUPABASE_URL?.trim();

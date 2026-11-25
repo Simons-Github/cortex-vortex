@@ -34,6 +34,8 @@ test.describe("Study Room", () => {
     await expect(page.getByText("+0% Mastery this round")).toBeVisible();
     await expect(page.getByRole("button", { name: "Retry missed" })).toHaveCount(0);
     await expect(page.getByText("Round complete")).toHaveCount(0);
+    await expect(page.getByTestId("topic-pdf-input")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /attach pdf/i })).toHaveCount(0);
   });
 
   test("tab=quiz search opens the quiz panel", async ({ page }) => {

@@ -39,16 +39,44 @@ export type DeleteUserGeminiKeyResult =
 
 export type ExplainResponse =
   | { quotaExceeded: true; resetInHours: number }
-  | { quotaExceeded?: false; text: string; fallback: boolean; reason?: FallbackReason };
+  | { requiresByok: true }
+  | {
+      quotaExceeded?: false;
+      requiresByok?: false;
+      text: string;
+      fallback: boolean;
+      reason?: FallbackReason;
+    };
 
 export type QuizResponse =
   | { quotaExceeded: true; resetInHours: number }
+  | { requiresByok: true }
   | {
       quotaExceeded?: false;
+      requiresByok?: false;
       questions: GeneratedQuizQuestion[];
       fallback: boolean;
       reason?: FallbackReason;
     };
+
+export type IngestTopicPdfResponse =
+  | { ok: true; fileName: string; pageCount: number | null; firstQuestion?: GeneratedQuizQuestion }
+  | {
+      ok: false;
+      reason:
+        | "no-byok"
+        | "rate-limited"
+        | "invalid-pdf"
+        | "too-large"
+        | "too-many-pages"
+        | "rejected"
+        | "not-found"
+        | "ingest-failed";
+      message: string;
+    };
+
+export type RemoveTopicPdfResponse =
+  { ok: true } | { ok: false; reason: "not-found" | "delete-failed"; message: string };
 
 export type CreateTopicResponse =
   | { quotaExceeded: true; resetInHours: number }

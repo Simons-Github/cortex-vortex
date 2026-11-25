@@ -2,7 +2,8 @@
 -- Also reflected in profiles.sql / mastery_streak_rpcs.sql / ai_usage_log.sql
 -- for fresh installs. Apply via Supabase SQL Editor or migration tooling.
 
--- 1. profiles: SELECT-only for clients. Streak writes must go through touch_streak.
+-- 1. profiles: SELECT-only for clients. Streak writes must go through
+--    touch_streak; preference writes through update_profile_preferences.
 drop policy if exists "Users can update own profile" on public.profiles;
 drop policy if exists "Users can insert own profile" on public.profiles;
 
@@ -19,6 +20,10 @@ grant execute on function public.increment_mastery(text, integer) to authenticat
 revoke all on function public.touch_streak() from public;
 revoke all on function public.touch_streak() from anon;
 grant execute on function public.touch_streak() to authenticated;
+
+revoke all on function public.update_profile_preferences(text, integer, text, boolean) from public;
+revoke all on function public.update_profile_preferences(text, integer, text, boolean) from anon;
+grant execute on function public.update_profile_preferences(text, integer, text, boolean) to authenticated;
 
 revoke all on function public.log_ai_usage(text, text) from public;
 revoke all on function public.log_ai_usage(text, text) from anon;
@@ -146,3 +151,19 @@ grant execute on function public.increment_mastery(text, integer) to authenticat
 revoke all on function public.touch_streak() from public;
 revoke all on function public.touch_streak() from anon;
 grant execute on function public.touch_streak() to authenticated;
+
+revoke all on function public.update_profile_preferences(text, integer, text, boolean) from public;
+revoke all on function public.update_profile_preferences(text, integer, text, boolean) from anon;
+grant execute on function public.update_profile_preferences(text, integer, text, boolean) to authenticated;
+
+-- Topic PDF metadata (see topic_documents.sql). SELECT-only for clients.
+-- Guarded so this file still applies on projects that have not added PDFs yet.
+do $$
+begin
+  if pg_catalog.to_regclass('public.topic_documents') is not null then
+    execute 'revoke insert, update, delete on table public.topic_documents from public';
+    execute 'revoke insert, update, delete on table public.topic_documents from anon';
+    execute 'revoke insert, update, delete on table public.topic_documents from authenticated';
+    execute 'grant select on table public.topic_documents to authenticated';
+  end if;
+end $$;

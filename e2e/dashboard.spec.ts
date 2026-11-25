@@ -53,4 +53,14 @@ test.describe("Dashboard", () => {
     await expect(page).toHaveURL(/\/settings/);
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
   });
+
+  test("settings icon closes settings and returns to the dashboard", async ({ page }) => {
+    await page.getByRole("link", { name: "Settings" }).click();
+    await expect(page).toHaveURL(/\/settings/);
+
+    await page.getByRole("link", { name: "Close settings" }).click();
+
+    await expect(page).toHaveURL(/\/dashboard/);
+    await expect(page.getByText("Knowledge Decay")).toBeVisible();
+  });
 });

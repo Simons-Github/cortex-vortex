@@ -1,14 +1,21 @@
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useCanGoBack, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { Settings, Flame, Cloud, HardDrive, LogOut, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { AuthDialog } from "@/components/AuthDialog";
 import { useAuth } from "@/lib/auth";
 import { useMasteryStore } from "@/lib/mastery-store";
 
+const gearClassName =
+  "flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:text-foreground";
+
 export function TopNav() {
   const navigate = useNavigate();
+  const router = useRouter();
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const canGoBack = useCanGoBack();
   const { user, signOut, isSupabaseConfigured } = useAuth();
   const { mode, streakCount } = useMasteryStore();
+  const onSettings = pathname === "/settings";
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur-xl">
@@ -72,13 +79,25 @@ export function TopNav() {
             isSupabaseConfigured && <AuthDialog />
           )}
 
-          <Link
-            to="/settings"
-            className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:text-foreground"
-            aria-label="Settings"
-          >
-            <Settings className="h-4 w-4" />
-          </Link>
+          {onSettings ? (
+            <a
+              href="/dashboard"
+              className={gearClassName}
+              aria-label="Close settings"
+              title="Close settings"
+              onClick={(event) => {
+                if (!canGoBack) return;
+                event.preventDefault();
+                router.history.back();
+              }}
+            >
+              <Settings className="h-4 w-4" />
+            </a>
+          ) : (
+            <Link to="/settings" className={gearClassName} aria-label="Settings">
+              <Settings className="h-4 w-4" />
+            </Link>
+          )}
         </div>
       </div>
     </header>

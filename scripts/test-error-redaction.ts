@@ -25,6 +25,18 @@ strictEqual(
   "header-shaped leaks are redacted",
 );
 
+const authKey = "AQ.Ab8RN6LEVEFAKESECRETKEYVALUE000000";
+ok(
+  !redactSecrets(`x-goog-api-key: ${authKey}`).includes("AQ."),
+  "auth-key (AQ.) header leaks are redacted",
+);
+match(
+  redactSecrets(`https://example.com/x?key=${authKey}`),
+  /\?key=\[REDACTED\]/,
+  "auth-key query values are redacted",
+);
+ok(!redactSecrets(`failed with ${authKey}`).includes("AQ.Ab8"), "standalone AQ. keys are redacted");
+
 const nested = new Error("outer failure");
 nested.cause = new Error(`upstream: ${leakUrl}`);
 ok(!describeError(nested).includes("AIzaSyFAKEKEY"), "cause-chain messages are redacted too");

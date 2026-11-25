@@ -27,6 +27,7 @@ import {
   getTopicMastery,
   incrementTopicMastery,
   isSupabaseConfigured,
+  profileQueryKey,
   touchStreak as touchStreakRpc,
   type Profile,
   type TopicMastery,
@@ -103,7 +104,6 @@ function clamp(n: number): number {
 }
 
 const MASTERY_QUERY_KEY = "topic-mastery";
-const PROFILE_QUERY_KEY = "profile";
 const RPC_DELTA_LIMIT = 10;
 
 /** Reaches an arbitrary total delta via repeated `increment_mastery` calls, since the RPC caps each call at ±10. */
@@ -164,7 +164,7 @@ export function useMasteryStore() {
   });
 
   const profileQuery = useQuery({
-    queryKey: [PROFILE_QUERY_KEY, user?.id],
+    queryKey: profileQueryKey(user?.id ?? ""),
     queryFn: () => getProfile(user!.id),
     enabled: mode === "synced",
     staleTime: 15_000,
@@ -319,10 +319,10 @@ export function useMasteryStore() {
     if (mode === "synced" && user) {
       try {
         const profile = await touchStreakRpc();
-        queryClient.setQueryData<Profile>([PROFILE_QUERY_KEY, user.id], profile);
+        queryClient.setQueryData<Profile>(profileQueryKey(user.id), profile);
         return profile.streak_count ?? 0;
       } catch (error) {
-        queryClient.invalidateQueries({ queryKey: [PROFILE_QUERY_KEY, user.id] });
+        queryClient.invalidateQueries({ queryKey: profileQueryKey(user.id) });
         throw error;
       }
     }

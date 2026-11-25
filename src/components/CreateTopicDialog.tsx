@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Lock, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -12,9 +13,10 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
 import { useDailyQuotaLock } from "@/lib/daily-quota-lock";
-import { createCustomTopic } from "@/lib/gemini-actions";
+import { createCustomTopic, getGeminiStatus } from "@/lib/gemini-actions";
 import { DAILY_QUOTA_TOAST } from "@/lib/gemini-types";
 import { storeFirstQuestion } from "@/lib/quiz-preload";
+import { attachTopicPdf } from "@/lib/topic-pdf-client";
 import type { CustomTopicLevel } from "@/lib/supabase";
 
 const TITLE_MIN_LENGTH = 3;
@@ -29,6 +31,8 @@ const LEVEL_OPTIONS: { value: CustomTopicLevel; label: string }[] = [
 const inputClass =
   "w-full rounded-xl border border-border bg-background px-3.5 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-zinc-600 disabled:opacity-60";
 
+type CreatePhase = "creating" | "uploading" | "reading";
+
 /** Inline validation message for the title field, or `null` once it's valid (or still empty — no error shown yet). */
 function titleValidationError(trimmedTitle: string): string | null {
   if (trimmedTitle.length === 0) return null;
@@ -41,6 +45,18 @@ function titleValidationError(trimmedTitle: string): string | null {
   return null;
 }
 
+function phaseLabel(phase: CreatePhase | null, loading: boolean): string {
+  if (!loading) return "Create topic";
+  switch (phase) {
+    case "uploading":
+      return "Uploading PDF…";
+    case "reading":
+      return "Reading document…";
+    default:
+      return "Creating topic…";
+  }
+}
+
 /**
  * Self-contained dialog for creating a Gemini-generated custom topic —
  * mirrors `AuthDialog`'s pattern (controls its own open state, trigger is
@@ -49,17 +65,30 @@ function titleValidationError(trimmedTitle: string): string | null {
  * room can render question 1 immediately while `generateQuiz` fills the rest.
  * The question is stored in sessionStorage (not the URL) so the answer is not
  * shareable via bookmarks or copied links.
+ *
+ * An optional PDF can be attached when the learner has stored a BYOK key.
  */
 export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
-  const { session } = useAuth();
+  const { user, session } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { quotaExceeded, lockQuota } = useDailyQuotaLock();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [level, setLevel] = useState<CustomTopicLevel>("beginner");
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [phase, setPhase] = useState<CreatePhase | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const geminiStatus = useQuery({
+    queryKey: ["gemini-status", session?.access_token ?? null],
+    queryFn: () => getGeminiStatus({ data: { accessToken: session?.access_token ?? null } }),
+    enabled: open,
+    staleTime: 60_000,
+  });
+
+  const canAttachPdf = geminiStatus.data?.userKey?.configured === true;
   const trimmedTitle = title.trim();
   const titleError = titleValidationError(trimmedTitle);
   const canSubmit =
@@ -71,7 +100,9 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
   const reset = () => {
     setTitle("");
     setLevel("beginner");
+    setPdfFile(null);
     setFormError(null);
+    setPhase(null);
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -83,6 +114,7 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
     if (!canSubmit || loading) return;
     setFormError(null);
     setLoading(true);
+    setPhase("creating");
 
     try {
       const result = await createCustomTopic({
@@ -108,11 +140,31 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
         return;
       }
 
+      let firstQuestion = result.firstQuestion;
+      let firstFallback = result.fallback;
+
+      if (pdfFile && user && canAttachPdf) {
+        const ingested = await attachTopicPdf({
+          userId: user.id,
+          topicId: result.topicId,
+          file: pdfFile,
+          accessToken: session?.access_token ?? null,
+          onProgress: setPhase,
+        });
+        if (!ingested.ok) {
+          toast.error(ingested.message);
+        } else if (ingested.firstQuestion) {
+          firstQuestion = ingested.firstQuestion;
+          firstFallback = false;
+        }
+      }
+
+      void queryClient.invalidateQueries({ queryKey: ["merged-topics", user?.id] });
       setOpen(false);
       reset();
       storeFirstQuestion(result.topicId, {
-        question: result.firstQuestion,
-        fallback: result.fallback || undefined,
+        question: firstQuestion,
+        fallback: firstFallback || undefined,
       });
       navigate({
         to: "/study/$topicId",
@@ -124,6 +176,7 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
       toast.error("Couldn't create your topic. Please try again.");
     } finally {
       setLoading(false);
+      setPhase(null);
     }
   };
 
@@ -186,6 +239,32 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
               ))}
             </div>
 
+            {!geminiStatus.isLoading &&
+              (canAttachPdf ? (
+                <div>
+                  <label className="text-xs text-muted-foreground">
+                    Optional PDF source (5 MB, 20 pages)
+                  </label>
+                  <input
+                    data-testid="topic-pdf-input"
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    disabled={loading}
+                    onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)}
+                    className="mt-1.5 block w-full text-xs text-muted-foreground file:mr-3 file:rounded-lg file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-xs file:text-foreground"
+                  />
+                  {pdfFile && <p className="mt-1 text-xs text-muted-foreground">{pdfFile.name}</p>}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  To attach a PDF,{" "}
+                  <Link to="/settings" className="underline hover:text-foreground">
+                    add your own Gemini API key
+                  </Link>
+                  .
+                </p>
+              ))}
+
             {formError && <p className="text-xs text-destructive">{formError}</p>}
 
             <button
@@ -195,7 +274,7 @@ export function CreateTopicDialog({ trigger }: { trigger: React.ReactNode }) {
             >
               {loading ? (
                 <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating your topic…
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> {phaseLabel(phase, loading)}
                 </>
               ) : (
                 <>

@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { topics, type Topic } from "@/lib/mock-data";
+import { TOPIC_PDF_BUCKET, topicPdfObjectPath } from "@/lib/pdf";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -41,13 +42,53 @@ export type TopicMastery = {
   last_reviewed_at: string;
 };
 
+/** Query cache key for `getProfile` — shared by mastery/streak and Settings. */
+export const PROFILE_QUERY_KEY = "profile" as const;
+
+export function profileQueryKey(userId: string) {
+  return [PROFILE_QUERY_KEY, userId] as const;
+}
+
+export const EXPLANATION_TONES = ["Concise", "Socratic", "Deeply technical"] as const;
+export type ExplanationTone = (typeof EXPLANATION_TONES)[number];
+
+export const DEFAULT_DAILY_GOAL_MINUTES = 20;
+export const DEFAULT_EXPLANATION_TONE: ExplanationTone = "Concise";
+export const DEFAULT_DECAY_REMINDERS = true;
+
 /** Row shape of `public.profiles`. */
 export type Profile = {
   id: string;
   updated_at: string;
   streak_count: number;
   last_active_date: string | null;
+  display_name: string | null;
+  daily_goal_minutes: number;
+  explanation_tone: ExplanationTone;
+  decay_reminders: boolean;
 };
+
+export type ProfilePreferences = {
+  displayName: string;
+  dailyGoalMinutes: number;
+  explanationTone: ExplanationTone;
+  decayReminders: boolean;
+};
+
+export function isExplanationTone(value: unknown): value is ExplanationTone {
+  return typeof value === "string" && (EXPLANATION_TONES as readonly string[]).includes(value);
+}
+
+export function profilePreferencesFrom(profile: Profile | null | undefined): ProfilePreferences {
+  return {
+    displayName: profile?.display_name?.trim() ?? "",
+    dailyGoalMinutes: profile?.daily_goal_minutes ?? DEFAULT_DAILY_GOAL_MINUTES,
+    explanationTone: isExplanationTone(profile?.explanation_tone)
+      ? profile.explanation_tone
+      : DEFAULT_EXPLANATION_TONE,
+    decayReminders: profile?.decay_reminders ?? DEFAULT_DECAY_REMINDERS,
+  };
+}
 
 /**
  * Plain `select` of every mastery row the user owns. RLS already restricts
@@ -140,7 +181,7 @@ export async function touchStreak(): Promise<Profile> {
   return data as Profile;
 }
 
-/** Plain `select` of the user's profile row (streak, last active date, etc). */
+/** Plain `select` of the user's profile row (streak, last active date, preferences). */
 export async function getProfile(userId: string): Promise<Profile | null> {
   const { data, error } = await requireClient()
     .from("profiles")
@@ -150,6 +191,23 @@ export async function getProfile(userId: string): Promise<Profile | null> {
 
   if (error) throw error;
   return data;
+}
+
+/**
+ * Replaces Settings preference columns through `update_profile_preferences`.
+ * Streak fields are untouched — same SELECT-only client policy as `touch_streak`.
+ */
+export async function updateProfilePreferences(prefs: ProfilePreferences): Promise<Profile> {
+  const { data, error } = await requireClient().rpc("update_profile_preferences", {
+    p_display_name: prefs.displayName.trim() || null,
+    p_daily_goal_minutes: prefs.dailyGoalMinutes,
+    p_explanation_tone: prefs.explanationTone,
+    p_decay_reminders: prefs.decayReminders,
+  });
+
+  if (error) throw error;
+  if (!data) throw new Error("update_profile_preferences returned no row.");
+  return data as Profile;
 }
 
 /** Row shape of `public.custom_topics` (see `supabase/sql/custom_topics.sql`). */
@@ -183,12 +241,20 @@ export async function getCustomTopics(userId: string): Promise<CustomTopic[]> {
 /** Distinguishes user-created topics from the app's built-in demo topics — see `MergedTopic`. */
 export type TopicSource = "demo" | "custom";
 
+/** PDF metadata for a custom topic — never includes `study_brief`. */
+export type TopicPdfMeta = {
+  fileName: string;
+  status: "ready" | "failed";
+  pageCount: number | null;
+  failureReason: string | null;
+};
+
 /**
  * A `Topic` tagged with where it came from, so the UI (matrix, study room,
  * etc.) can visually distinguish "Custom" from "Demo" topics without
  * needing to know the underlying data source itself.
  */
-export type MergedTopic = Topic & { source: TopicSource };
+export type MergedTopic = Topic & { source: TopicSource; pdf?: TopicPdfMeta | null };
 
 const CUSTOM_TOPIC_DIFFICULTY: Record<CustomTopicLevel, Topic["difficulty"]> = {
   beginner: "Beginner",
@@ -204,7 +270,7 @@ const CUSTOM_TOPIC_DIFFICULTY: Record<CustomTopicLevel, Topic["difficulty"]> = {
  * freshly created topic still ships its first question via `createCustomTopic`
  * so the study room can render immediately.
  */
-function customTopicToMergedTopic(row: CustomTopic): MergedTopic {
+function customTopicToMergedTopic(row: CustomTopic, pdf?: TopicPdfMeta | null): MergedTopic {
   return {
     id: row.id,
     title: row.title,
@@ -219,7 +285,56 @@ function customTopicToMergedTopic(row: CustomTopic): MergedTopic {
     quiz: [],
     resources: [],
     source: "custom",
+    pdf: pdf ?? null,
   };
+}
+
+type TopicDocumentMetaRow = {
+  topic_id: string;
+  file_name: string;
+  status: "ready" | "failed";
+  page_count: number | null;
+  failure_reason: string | null;
+};
+
+async function getTopicPdfMetas(userId: string): Promise<Map<string, TopicPdfMeta>> {
+  const { data, error } = await requireClient()
+    .from("topic_documents")
+    .select("topic_id, file_name, status, page_count, failure_reason")
+    .eq("user_id", userId);
+
+  if (error) throw error;
+  const map = new Map<string, TopicPdfMeta>();
+  for (const row of (data ?? []) as TopicDocumentMetaRow[]) {
+    map.set(row.topic_id, {
+      fileName: row.file_name,
+      status: row.status,
+      pageCount: row.page_count,
+      failureReason: row.failure_reason,
+    });
+  }
+  return map;
+}
+
+/** Uploads (or replaces) the one PDF object for a custom topic. */
+export async function uploadTopicPdf(
+  userId: string,
+  topicId: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const { error } = await requireClient()
+    .storage.from(TOPIC_PDF_BUCKET)
+    .upload(
+      topicPdfObjectPath(userId, topicId),
+      new Blob([new Uint8Array(bytes)], { type: "application/pdf" }),
+      {
+        upsert: true,
+        // Bucket only allows application/pdf — ignore whatever the OS/browser reported.
+        contentType: "application/pdf",
+        cacheControl: "3600",
+      },
+    );
+  if (error) throw error;
 }
 
 /**
@@ -231,6 +346,15 @@ function customTopicToMergedTopic(row: CustomTopic): MergedTopic {
  */
 export async function getMergedTopics(userId: string): Promise<MergedTopic[]> {
   const demoTopics: MergedTopic[] = topics.map((t) => ({ ...t, source: "demo" }));
-  const customRows = await getCustomTopics(userId);
-  return [...demoTopics, ...customRows.map(customTopicToMergedTopic)];
+  const [customRows, pdfMetas] = await Promise.all([
+    getCustomTopics(userId),
+    getTopicPdfMetas(userId).catch((error) => {
+      console.error("Failed to load topic PDF metadata (non-fatal):", error);
+      return new Map<string, TopicPdfMeta>();
+    }),
+  ]);
+  return [
+    ...demoTopics,
+    ...customRows.map((row) => customTopicToMergedTopic(row, pdfMetas.get(row.id) ?? null)),
+  ];
 }

@@ -13,6 +13,7 @@ test.describe("Knowledge Matrix", () => {
     await expect(page.getByRole("heading", { name: "Algorithms & Data Structures" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "React 19 & TypeScript" })).toBeVisible();
     await expect(page.getByText("Sign in to create your own custom topics")).toBeVisible();
+    await expect(page.getByTestId("topic-pdf-input")).toHaveCount(0);
   });
 
   test("search filters topics", async ({ page }) => {
@@ -45,5 +46,16 @@ test.describe("Knowledge Matrix", () => {
 
     await expect(page).toHaveURL(/\/study\/linear-algebra/);
     await expect(page.getByRole("heading", { name: "Linear Algebra for ML" })).toBeVisible();
+  });
+
+  test("settings icon returns to the matrix", async ({ page }) => {
+    await page.getByRole("link", { name: "Settings" }).click();
+    await expect(page).toHaveURL(/\/settings/);
+    await waitForHydration(page);
+
+    await page.getByRole("link", { name: "Close settings" }).click();
+
+    await expect(page).toHaveURL(/\/matrix/);
+    await expect(page.getByRole("heading", { name: "Knowledge Matrix" })).toBeVisible();
   });
 });

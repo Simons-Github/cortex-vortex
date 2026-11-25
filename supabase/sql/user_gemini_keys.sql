@@ -53,7 +53,8 @@ alter table public.ai_usage_log
     'burst_explain',
     'burst_quiz',
     'burst_create_topic',
-    'burst_save_key'
+    'burst_save_key',
+    'burst_pdf_ingest'
   ));
 
 create or replace function public.service_require_role()

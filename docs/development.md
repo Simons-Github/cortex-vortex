@@ -31,6 +31,7 @@ Database setup is in [database.md](database.md).
 | `npm run test:e2e:ui`                      | Playwright UI mode                                          |
 | `npx tsx scripts/test-topic-moderation.ts` | Gemini moderation cases + RPC/INSERT probes (needs `.env`)  |
 | `npx tsx scripts/test-user-key-crypto.ts`  | AES-GCM roundtrip, AAD tamper, hint masking                 |
+| `npx tsx scripts/test-pdf-limits.ts`       | PDF magic bytes, size/page limits, document-block wrapping  |
 | `npx tsx scripts/test-error-redaction.ts`  | Error redaction checks                                      |
 
 After a local Node-preset build: `node .output/server/index.mjs`.
@@ -54,7 +55,7 @@ PLAYWRIGHT_BASE_URL=https://your-host.example npm run test:e2e
 src/
   routes/       TanStack Router (landing, dashboard, study, matrix, settings)
   components/   Vortex (shader, atmosphere, particles), auth, topic dialogs, UI
-  lib/          auth, mastery-store, gemini*, supabase, mock-data
+  lib/          auth, mastery-store, gemini*, pdf, supabase, mock-data
   server/       token verification, burst/quota RPCs, BYOK crypto + store, topic documents
   styles.css    design tokens and animations
 e2e/            Playwright specs
@@ -77,3 +78,4 @@ Production should have both Supabase and Gemini configured so quotas and live AI
 - Custom topic creation fails after a deploy: the SQL is out of date. Re-run `user_gemini_keys.sql`, `create_custom_topic.sql`, then `ai_burst_limit.sql`.
 - Personal-key form is disabled in Settings: `USER_KEY_ENCRYPTION_SECRET` or `SUPABASE_SERVICE_ROLE_KEY` is unset.
 - AI answers look canned: `GEMINI_API_KEY` is unset, so the mock fallback is active.
+- PDF upload rejected: it needs a stored BYOK key, `application/pdf` with `%PDF` magic bytes, at most 5 MB and 20 pages.

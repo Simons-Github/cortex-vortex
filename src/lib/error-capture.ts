@@ -16,8 +16,9 @@ const CAUSE_DEPTH_LIMIT = 5;
 const DESCRIPTION_LENGTH_LIMIT = 8_000;
 
 const QUERY_KEY = /([?&](?:key|access_token|api_key|apikey)=)[^&\s"'\\]+/gi;
-const HEADER_KEY = /(x-goog-api-key["'\s:=]+)[A-Za-z0-9_-]{20,}/gi;
-const KEYISH = /(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/g;
+const HEADER_KEY = /(x-goog-api-key["'\s:=]+)[A-Za-z0-9._~-]{20,}/gi;
+const KEYISH =
+  /(?<![A-Za-z0-9._~-])(?:AIza[A-Za-z0-9_-]{20,}|AQ\.[A-Za-z0-9._~-]{10,})(?![A-Za-z0-9._~-])/g;
 
 export function redactSecrets(text: string): string {
   return text

@@ -16,7 +16,7 @@ import {
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { useQueryClient } from "@tanstack/react-query";
-import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { isSupabaseConfigured, profileQueryKey, supabase } from "@/lib/supabase";
 import { mergeLocalMasteryIntoSupabase } from "@/lib/mastery-store";
 
 type AuthResult = { error: string | null };
@@ -68,7 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             })
             .finally(() => {
               queryClient.invalidateQueries({ queryKey: ["topic-mastery", userId] });
-              queryClient.invalidateQueries({ queryKey: ["profile", userId] });
+              queryClient.invalidateQueries({ queryKey: profileQueryKey(userId) });
             });
         }
       }

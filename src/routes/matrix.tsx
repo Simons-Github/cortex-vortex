@@ -6,6 +6,7 @@ import { TopNav } from "@/components/TopNav";
 import { LiveMasteryBadge } from "@/components/LiveMasteryBadge";
 import { AuthDialog } from "@/components/AuthDialog";
 import { CreateTopicDialog } from "@/components/CreateTopicDialog";
+import { PdfTopicBadge } from "@/components/TopicPdfCard";
 import { difficulties, topics } from "@/lib/mock-data";
 import { useMasteryStore } from "@/lib/mastery-store";
 import { useAuth } from "@/lib/auth";
@@ -114,6 +115,7 @@ function Matrix() {
                     <div className="flex items-center gap-2">
                       <h2 className="text-base font-medium text-foreground">{t.title}</h2>
                       {t.source === "custom" && <CustomTopicBadge />}
+                      {t.pdf?.status === "ready" && <PdfTopicBadge />}
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {t.category} · {t.difficulty}

@@ -14,5 +14,5 @@ Signed-in users can store their own Gemini key. It is encrypted with AES-256-GCM
 ## Other controls
 
 - Gemini is only called from TanStack Start server functions, which are covered by CSRF middleware (`src/start.ts`).
-- Mastery, streak, custom topics and quiz attempts are SELECT-only for clients; writes go through SECURITY DEFINER RPCs.
+- Mastery, streak, profile preferences, custom topics and quiz attempts are SELECT-only for clients; writes go through SECURITY DEFINER RPCs.
 - Topic-name moderation runs in the app server, not inside `create_custom_topic`. A direct PostgREST call to the RPC can skip the Gemini classification (quota and structural title checks still apply).

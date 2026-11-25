@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Loader2 } from "lucide-react";
@@ -7,10 +7,14 @@ import { AuthDialog } from "@/components/AuthDialog";
 import { TopNav } from "@/components/TopNav";
 import { useAuth } from "@/lib/auth";
 import { deleteUserGeminiKey, getGeminiStatus, saveUserGeminiKey } from "@/lib/gemini-actions";
-
-const TONE_OPTIONS = ["Concise", "Socratic", "Deeply technical"] as const;
-const PREVIEW_TONE = "Concise";
-const PREVIEW_DAILY_GOAL = 20;
+import {
+  EXPLANATION_TONES,
+  getProfile,
+  profilePreferencesFrom,
+  profileQueryKey,
+  updateProfilePreferences,
+  type ProfilePreferences,
+} from "@/lib/supabase";
 
 const SAVE_ERROR_MESSAGE: Record<
   "invalid-key" | "rate-limited" | "byok-unavailable" | "save-failed",
@@ -145,7 +149,8 @@ function SettingsPage() {
           <p className="mt-1 text-sm text-muted-foreground">
             Signed-in accounts can store their own key, encrypted at rest. It is sent to the server
             to save, then forgotten here — we only show a hint afterwards. Your key skips the shared
-            daily quota; short burst limits still apply.
+            daily quota; short burst limits still apply. Custom topics with a PDF source always use
+            this key — they never fall back to the platform key.
           </p>
 
           {!user ? (
@@ -208,7 +213,7 @@ function SettingsPage() {
                 spellCheck={false}
                 value={apiKeyInput}
                 onChange={(e) => setApiKeyInput(e.target.value)}
-                placeholder="AIza…"
+                placeholder="AQ.…"
                 disabled={busy || geminiStatus.isLoading}
                 className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
               />
@@ -252,69 +257,227 @@ function SettingsPage() {
           )}
         </section>
 
-        <section className="mt-4 rounded-2xl border border-border bg-card p-6">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-sm font-medium text-foreground">Profile</h2>
-            <span className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
-              Coming soon
-            </span>
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground">These preferences are not saved yet.</p>
-
-          <label className="mt-5 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
-            Display name
-          </label>
-          <input
-            disabled
-            placeholder="Your name"
-            className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-60"
-          />
-
-          <label className="mt-6 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
-            Daily goal · {PREVIEW_DAILY_GOAL} min
-          </label>
-          <input
-            type="range"
-            disabled
-            min={5}
-            max={90}
-            step={5}
-            defaultValue={PREVIEW_DAILY_GOAL}
-            className="mt-3 w-full accent-zinc-300 disabled:cursor-not-allowed disabled:opacity-60"
-          />
-
-          <label className="mt-6 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
-            Explanation tone
-          </label>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {TONE_OPTIONS.map((t) => (
-              <button
-                key={t}
-                type="button"
-                disabled
-                className={`rounded-full border px-3.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60 ${
-                  t === PREVIEW_TONE
-                    ? "border-zinc-500 bg-secondary text-foreground"
-                    : "border-border text-muted-foreground"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-
-          <button
-            type="button"
-            disabled
-            className="mt-6 flex w-full items-center justify-between rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <span>Decay reminders</span>
-            <span className="relative h-5 w-9 rounded-full bg-zinc-300">
-              <span className="absolute top-0.5 left-[1.15rem] h-4 w-4 rounded-full bg-black" />
-            </span>
-          </button>
-        </section>
+        <ProfileSection />
       </main>
     </div>
+  );
+}
+
+function serializePrefs(prefs: ProfilePreferences): string {
+  return JSON.stringify({
+    displayName: prefs.displayName.trim(),
+    dailyGoalMinutes: prefs.dailyGoalMinutes,
+    explanationTone: prefs.explanationTone,
+    decayReminders: prefs.decayReminders,
+  });
+}
+
+function ProfileSection() {
+  const { user, isSupabaseConfigured, isLoading: authLoading } = useAuth();
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState<ProfilePreferences>(() => profilePreferencesFrom(null));
+  const [hydrated, setHydrated] = useState(false);
+  const lastSavedJson = useRef("");
+  const saveGeneration = useRef(0);
+
+  const profileQuery = useQuery({
+    queryKey: profileQueryKey(user?.id ?? ""),
+    queryFn: () => getProfile(user!.id),
+    enabled: Boolean(user),
+    staleTime: 15_000,
+  });
+
+  useEffect(() => {
+    if (!user) {
+      setHydrated(false);
+      setDraft(profilePreferencesFrom(null));
+      lastSavedJson.current = "";
+      return;
+    }
+    if (profileQuery.isLoading) return;
+    if (hydrated) return;
+
+    const next = profilePreferencesFrom(profileQuery.data ?? null);
+    setDraft(next);
+    lastSavedJson.current = serializePrefs(next);
+    setHydrated(true);
+  }, [user, profileQuery.isLoading, profileQuery.data, hydrated]);
+
+  const { mutate } = useMutation({
+    mutationFn: updateProfilePreferences,
+    onError: () => {
+      toast.error("Couldn't save your profile preferences. Please try again.");
+    },
+  });
+
+  useEffect(() => {
+    if (!user || !hydrated) return;
+    const json = serializePrefs(draft);
+    if (json === lastSavedJson.current) return;
+
+    const handle = window.setTimeout(() => {
+      const generation = ++saveGeneration.current;
+      mutate(draft, {
+        onSuccess: (profile) => {
+          if (generation !== saveGeneration.current) return;
+          lastSavedJson.current = json;
+          queryClient.setQueryData(profileQueryKey(user.id), profile);
+        },
+      });
+    }, 400);
+
+    return () => window.clearTimeout(handle);
+  }, [draft, user, hydrated, queryClient, mutate]);
+
+  const signedIn = Boolean(user);
+  const loading = authLoading || (signedIn && !hydrated);
+  const editable = signedIn && hydrated;
+
+  return (
+    <section className="mt-4 rounded-2xl border border-border bg-card p-6">
+      <h2 className="text-sm font-medium text-foreground">Profile</h2>
+
+      {loading ? (
+        <p className="mt-2 inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading your preferences…
+        </p>
+      ) : signedIn ? (
+        profileQuery.isError ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Couldn&apos;t load your preferences. Edits will still try to save.
+          </p>
+        ) : (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Saved to your account and synced across devices.
+          </p>
+        )
+      ) : (
+        <div className="mt-2">
+          <p className="text-sm text-muted-foreground">Sign in to save your profile preferences.</p>
+          {isSupabaseConfigured && (
+            <div className="mt-3">
+              <AuthDialog
+                trigger={
+                  <button
+                    type="button"
+                    className="rounded-xl border border-zinc-500 bg-secondary px-4 py-2 text-sm text-foreground"
+                  >
+                    Sign in
+                  </button>
+                }
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {!loading && (
+        <ProfileFields
+          draft={draft}
+          disabled={!editable}
+          onChange={setDraft}
+          onDisplayNameBlur={() => {
+            if (!editable) return;
+            const trimmed = draft.displayName.trim();
+            if (trimmed === draft.displayName) return;
+            setDraft({ ...draft, displayName: trimmed });
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function ProfileFields({
+  draft,
+  disabled,
+  onChange,
+  onDisplayNameBlur,
+}: {
+  draft: ProfilePreferences;
+  disabled: boolean;
+  onChange: (next: ProfilePreferences) => void;
+  onDisplayNameBlur: () => void;
+}) {
+  return (
+    <>
+      <label
+        htmlFor="profile-display-name"
+        className="mt-5 block text-xs uppercase tracking-[0.2em] text-muted-foreground"
+      >
+        Display name
+      </label>
+      <input
+        id="profile-display-name"
+        value={draft.displayName}
+        maxLength={80}
+        disabled={disabled}
+        placeholder="Your name"
+        onChange={(e) => onChange({ ...draft, displayName: e.target.value })}
+        onBlur={onDisplayNameBlur}
+        className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-60"
+      />
+
+      <label
+        htmlFor="profile-daily-goal"
+        className="mt-6 block text-xs uppercase tracking-[0.2em] text-muted-foreground"
+      >
+        Daily goal · {draft.dailyGoalMinutes} min
+      </label>
+      <input
+        id="profile-daily-goal"
+        type="range"
+        min={5}
+        max={90}
+        step={5}
+        value={draft.dailyGoalMinutes}
+        disabled={disabled}
+        onChange={(e) => onChange({ ...draft, dailyGoalMinutes: Number(e.target.value) })}
+        className="mt-3 w-full accent-zinc-300 disabled:cursor-not-allowed disabled:opacity-60"
+      />
+
+      <p className="mt-6 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+        Explanation tone
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {EXPLANATION_TONES.map((tone) => (
+          <button
+            key={tone}
+            type="button"
+            disabled={disabled}
+            aria-pressed={draft.explanationTone === tone}
+            onClick={() => onChange({ ...draft, explanationTone: tone })}
+            className={`rounded-full border px-3.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60 ${
+              draft.explanationTone === tone
+                ? "border-zinc-500 bg-secondary text-foreground"
+                : "border-border text-muted-foreground"
+            }`}
+          >
+            {tone}
+          </button>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        disabled={disabled}
+        aria-pressed={draft.decayReminders}
+        onClick={() => onChange({ ...draft, decayReminders: !draft.decayReminders })}
+        className="mt-6 flex w-full items-center justify-between rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <span>Decay reminders</span>
+        <span
+          className={`relative h-5 w-9 rounded-full ${
+            draft.decayReminders ? "bg-zinc-300" : "bg-zinc-700"
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 h-4 w-4 rounded-full bg-black ${
+              draft.decayReminders ? "left-[1.15rem]" : "left-0.5"
+            }`}
+          />
+        </span>
+      </button>
+    </>
   );
 }

@@ -22,7 +22,8 @@ alter table public.ai_usage_log
     'burst_explain',
     'burst_quiz',
     'burst_create_topic',
-    'burst_save_key'
+    'burst_save_key',
+    'burst_pdf_ingest'
   ));
 
 -- 2. Atomic compare-and-insert for the short-window burst layer. Counts the
@@ -57,7 +58,7 @@ begin
     raise exception 'try_log_ai_burst requires a non-negative p_limit';
   end if;
 
-  if p_endpoint not in ('explain', 'quiz', 'create_topic') then
+  if p_endpoint not in ('explain', 'quiz', 'create_topic', 'pdf_ingest') then
     raise exception 'try_log_ai_burst: unsupported endpoint %', p_endpoint;
   end if;
 

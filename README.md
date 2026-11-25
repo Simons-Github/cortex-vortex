@@ -14,6 +14,7 @@ A study app that shows how much of each topic you are forgetting and uses AI exp
 - Knowledge Matrix with mastery per topic, search and filters
 - Study room with an explanation chat and an adaptive multiple-choice quiz
 - Custom topics, checked by Gemini before they are created
+- Attach a PDF to a custom topic as study material (needs your own Gemini key)
 - Sign in with email or Google. Progress from the demo is merged into your account.
 - Optional: use your own Gemini API key instead of the shared daily limit
 
@@ -67,12 +68,13 @@ This runs the demo with mock data. For sign-in and AI, copy `.env.example` to `.
 
 ## Tests
 
-Playwright tests in `e2e/` cover the demo path: landing page, dashboard, matrix, study room and settings. Run them with `npm run test:e2e`. CI runs them together with lint, type check and build on every push. A few small scripts in `scripts/` check the key encryption, error redaction and topic moderation.
+Playwright tests in `e2e/` cover the demo path: landing page, dashboard, matrix, study room and settings. Run them with `npm run test:e2e`. CI runs them together with lint, type check and build on every push. A few small scripts in `scripts/` check the key encryption, PDF limits, error redaction and topic moderation.
 
 ## Limitations
 
 - The end-to-end tests don't cover the signed-in AI flows.
 - Topic moderation runs in the app server. Someone calling the Supabase RPC directly could skip the Gemini check, but not the quota.
+- One PDF per topic, up to 5 MB and 20 pages, without OCR. Quizzes use a short summary of the PDF, not the full text.
 - The encryption secret for stored keys can't be rotated without users entering their keys again.
 
 ## License

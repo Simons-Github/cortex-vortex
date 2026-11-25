@@ -1,23 +1,32 @@
 -- Per-user profile row: streak_count + last_active_date (advanced only via
--- the `touch_streak` SECURITY DEFINER RPC — see `mastery_streak_rpcs.sql`).
--- Also installs the auth trigger that inserts a profile when a user signs up.
+-- the `touch_streak` SECURITY DEFINER RPC — see `mastery_streak_rpcs.sql`)
+-- and Settings preferences (via `update_profile_preferences` — see
+-- `profile_preferences.sql`). Also installs the auth trigger that inserts a
+-- profile when a user signs up.
 -- Review and run this in the Supabase SQL Editor.
 
 -- 1. Table: one row per auth user. Defaults seed a streak of 1 for "today"
---    so a brand-new account already looks active on first login.
+--    so a brand-new account already looks active on first login. Preference
+--    columns are included for fresh installs; existing projects get them
+--    from `profile_preferences.sql` (`ALTER … IF NOT EXISTS` + RPC).
 create table if not exists public.profiles (
   id uuid primary key references auth.users on delete cascade,
   updated_at timestamptz not null default timezone('utc'::text, now()),
   streak_count integer default 1,
-  last_active_date date default current_date
+  last_active_date date default current_date,
+  display_name text,
+  daily_goal_minutes integer not null default 20,
+  explanation_tone text not null default 'Concise',
+  decay_reminders boolean not null default true
 );
 
 -- 2. RLS: users can read only their own profile row. There is deliberately
 --    no insert/update/delete policy for clients — signup inserts go through
 --    `handle_new_user` (SECURITY DEFINER), streak writes go through
---    `touch_streak`, and account cleanup is owned by the auth.users cascade
---    (and the service role), not the browser client. A client UPDATE policy
---    would let users spoof streak_count / last_active_date.
+--    `touch_streak`, preference writes go through `update_profile_preferences`,
+--    and account cleanup is owned by the auth.users cascade (and the service
+--    role), not the browser client. A client UPDATE policy would let users
+--    spoof streak_count / last_active_date.
 alter table public.profiles enable row level security;
 
 create policy "Users can view own profile"
