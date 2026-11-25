@@ -1,0 +1,431 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design system definition.
+ *
+ * The @theme inline block maps CSS custom properties to Tailwind utility
+ * classes (e.g. --color-primary -> bg-primary, text-primary).
+ *
+ * The :root and .dark blocks define the actual color values using oklch.
+ * All colors MUST use oklch format.
+ *
+ * To add a new semantic color:
+ * 1. Add the variable to :root (light value) and .dark (dark value)
+ * 2. Register it in @theme inline as --color-<name>: var(--<name>)
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.75rem;
+  --background: oklch(0 0 0);
+  --foreground: oklch(1 0 0);
+  --card: oklch(0.145 0.005 285.8);
+  --card-foreground: oklch(1 0 0);
+  --popover: oklch(0.145 0.005 285.8);
+  --popover-foreground: oklch(1 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0 0 0);
+  --secondary: oklch(0.21 0.006 285.9);
+  --secondary-foreground: oklch(1 0 0);
+  --muted: oklch(0.21 0.006 285.9);
+  --muted-foreground: oklch(0.705 0.015 286);
+  --accent: oklch(0.21 0.006 285.9);
+  --accent-foreground: oklch(1 0 0);
+  --destructive: oklch(0.637 0.208 25.3);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.274 0.006 286);
+  --input: oklch(0.274 0.006 286);
+  --ring: oklch(0.442 0.011 285.9);
+  --chart-1: oklch(0.9 0 0);
+  --chart-2: oklch(0.75 0 0);
+  --chart-3: oklch(0.6 0 0);
+  --chart-4: oklch(0.45 0 0);
+  --chart-5: oklch(0.3 0 0);
+  --sidebar: oklch(0.11 0.004 285.8);
+  --sidebar-foreground: oklch(1 0 0);
+  --sidebar-primary: oklch(0.985 0 0);
+  --sidebar-primary-foreground: oklch(0 0 0);
+  --sidebar-accent: oklch(0.21 0.006 285.9);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-border: oklch(0.274 0.006 286);
+  --sidebar-ring: oklch(0.442 0.011 285.9);
+}
+
+@keyframes vortex-spin {
+  from {
+    transform: rotate(0deg) translateZ(0);
+  }
+  to {
+    transform: rotate(360deg) translateZ(0);
+  }
+}
+
+@keyframes vortex-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1) translateZ(0);
+  }
+  50% {
+    opacity: 0.75;
+    transform: scale(1.06) translateZ(0);
+  }
+}
+
+/* Ambient hero lighting — barely perceptible opacity pulse. */
+@keyframes hero-glow-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+/* Cursor reveal — filter-only so the layer stays on the compositor. */
+@keyframes neuron-pulse {
+  0%,
+  100% {
+    -webkit-filter: brightness(1) drop-shadow(0 0 6px oklch(0.82 0.09 250 / 0.14));
+    filter: brightness(1) drop-shadow(0 0 6px oklch(0.82 0.09 250 / 0.14));
+  }
+  50% {
+    -webkit-filter: brightness(1.16) drop-shadow(0 0 18px oklch(0.9 0.1 250 / 0.38));
+    filter: brightness(1.16) drop-shadow(0 0 18px oklch(0.9 0.1 250 / 0.38));
+  }
+}
+
+@utility animate-vortex-spin {
+  animation: vortex-spin 90s linear infinite;
+}
+
+/* Distant halo — ~2.4× slower than the hero disk so depth reads as scale. */
+@utility animate-vortex-field {
+  animation: vortex-spin 220s linear infinite;
+}
+
+@utility animate-vortex-field-slow {
+  animation: vortex-spin 340s linear infinite reverse;
+}
+
+@utility animate-vortex-breathe {
+  animation: vortex-breathe 9s ease-in-out infinite;
+  -webkit-filter: blur(24px);
+  filter: blur(24px);
+}
+
+/* Tailwind backdrop-blur utilities omit -webkit- on the Lightning CSS path
+   we ship; Safari still needs the prefix to actually blur the backdrop. */
+@utility backdrop-blur-sm {
+  -webkit-backdrop-filter: blur(var(--blur-sm));
+  backdrop-filter: blur(var(--blur-sm));
+}
+
+@utility backdrop-blur-xl {
+  -webkit-backdrop-filter: blur(var(--blur-xl));
+  backdrop-filter: blur(var(--blur-xl));
+}
+
+@utility animate-hero-glow {
+  animation: hero-glow-pulse 14s ease-in-out infinite;
+}
+
+@utility animate-neuron-pulse {
+  animation: neuron-pulse 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-vortex-spin,
+  .animate-vortex-breathe,
+  .animate-vortex-field,
+  .animate-vortex-field-slow,
+  .animate-hero-glow,
+  .animate-neuron-pulse {
+    animation: none !important;
+  }
+}
+
+/*
+ * Hero vortex card — dissolve the square canvas into the starfield.
+ *
+ * Only `.vortex-card__media` (the image/WebGL layer) is masked and vignetted.
+ * Overlay copy ("34%", "Knowledge Decay") and the quiz buttons live outside
+ * this tree, so they stay sharp.
+ *
+ * --vortex-mask-solid / --vortex-mask-edge are read by VortexShader StarField
+ * so star density falls off with the same curve as the CSS mask.
+ */
+.vortex-card {
+  --vortex-backdrop: var(--background);
+  --vortex-size: min(92vw, clamp(340px, 50vh, 560px));
+  --vortex-radius: clamp(1.75rem, 6.5vw, 3.25rem);
+  /* Tight contact shadow only — Safari approximates large box-shadow blurs as
+     a harder rounded-rect, which read as a card edge. The far umbra lives on
+     ::before as a radial-gradient (engine-stable). */
+  --vortex-shadow-blur: min(calc(var(--vortex-radius) * 0.4), calc(var(--vortex-size) * 0.04));
+  --vortex-shadow-spread: calc(var(--vortex-shadow-blur) * 0.15);
+  /* Mask stops — 72% opaque, then fade to the mid-sides. Shader uses these. */
+  --vortex-mask-solid: 72%;
+  --vortex-mask-edge: 7%;
+  --vortex-mask: radial-gradient(
+    ellipse 100% 100% at 50% 48%,
+    #000 0%,
+    #000 var(--vortex-mask-solid),
+    transparent 100%
+  );
+  --vortex-mask-x: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 var(--vortex-mask-edge),
+    #000 calc(100% - var(--vortex-mask-edge)),
+    transparent 100%
+  );
+  --vortex-mask-y: linear-gradient(
+    to bottom,
+    transparent 0%,
+    #000 var(--vortex-mask-edge),
+    #000 calc(100% - var(--vortex-mask-edge)),
+    transparent 100%
+  );
+  position: relative;
+  overflow: visible;
+  isolation: isolate;
+  transform: translateZ(0);
+  will-change: transform;
+  border-radius: var(--vortex-radius);
+  box-shadow:
+    0 0 var(--vortex-shadow-blur) var(--vortex-shadow-spread)
+      oklch(from var(--vortex-backdrop) l c h / 0.35);
+}
+
+/*
+ * Far dissolve — ellipse matching the disk, not the rounded-rect box.
+ * Chromium's old 2.5× box-shadow-blur looked like bokeh; Safari kept a
+ * hard card silhouette. A radial-gradient paints the same falloff in both.
+ */
+.vortex-card::before {
+  content: "";
+  position: absolute;
+  inset: -28%;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 52% 50% at 50% 48%,
+    transparent 0%,
+    transparent 46%,
+    oklch(from var(--vortex-backdrop) l c h / 0.32) 62%,
+    oklch(from var(--vortex-backdrop) l c h / 0.12) 76%,
+    transparent 90%
+  );
+  transform: translateZ(0);
+}
+
+/* Bright halo behind the disk — glow is the gradient, not a box-shadow blur. */
+.vortex-card__glow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: -1;
+  width: 148%;
+  height: 148%;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 72% 52% at 50% 50%,
+    color-mix(in oklch, var(--muted-foreground) 26%, transparent) 0%,
+    color-mix(in oklch, var(--muted-foreground) 10%, transparent) 36%,
+    color-mix(in oklch, var(--muted-foreground) 4%, transparent) 58%,
+    transparent 74%
+  );
+  transform: translate(-50%, -50%) translateZ(0);
+  -webkit-filter: blur(12px);
+  filter: blur(12px);
+}
+
+@media (max-width: 640px) {
+  .vortex-card {
+    --vortex-mask-solid: 66%;
+  }
+}
+
+.vortex-card__media {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  border-radius: inherit;
+  isolation: isolate;
+  transform: translateZ(0);
+  -webkit-mask-image: var(--vortex-mask);
+  mask-image: var(--vortex-mask);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+
+/* Linear edge-fray on top of the radial. WebKit uses a different composite
+   keyword and will ignore unprefixed mask-image if -webkit-mask-image is set
+   on the base rule — keep both in lockstep. */
+@supports (mask-composite: intersect) {
+  .vortex-card__media {
+    -webkit-mask-image: var(--vortex-mask), var(--vortex-mask-x), var(--vortex-mask-y);
+    mask-image: var(--vortex-mask), var(--vortex-mask-x), var(--vortex-mask-y);
+    -webkit-mask-composite: source-in, source-in;
+    mask-composite: intersect;
+    -webkit-mask-repeat: no-repeat, no-repeat, no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: 100% 100%, 100% 100%, 100% 100%;
+    mask-size: 100% 100%;
+  }
+}
+
+/* Same radial on the canvas — WebGL layers sometimes ignore a parent mask. */
+.vortex-card__media canvas {
+  -webkit-mask-image: var(--vortex-mask);
+  mask-image: var(--vortex-mask);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+
+/* Vignette — transparent over the disk; rim is --vortex-backdrop (= body
+   --background). Relative-color alpha keeps the hue of the body token so
+   color-mix(in oklch, …, transparent) cannot tint a grey-blue ring. */
+.vortex-card__media::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(
+    ellipse 100% 100% at 50% 48%,
+    transparent 0%,
+    transparent 62%,
+    oklch(from var(--vortex-backdrop) l c h / 0.35) 82%,
+    var(--vortex-backdrop) 100%
+  );
+}
+
+/* —— Atmosphere haze — modest blur + prefixed filter. Safari clips large
+   filter:blur() radii to a hard rectangle; the falloff lives in the gradient. */
+.vortex-atmosphere {
+  isolation: isolate;
+  transform: translateZ(0);
+}
+
+.vortex-haze-well {
+  transform: translateZ(0);
+  -webkit-filter: blur(28px);
+  filter: blur(28px);
+}
+
+.vortex-haze-field {
+  -webkit-filter: blur(32px);
+  filter: blur(32px);
+}
+
+.vortex-haze-field-slow {
+  -webkit-filter: blur(36px);
+  filter: blur(36px);
+}
+
+/* mix-blend-mode:screen is a no-op in Safari unless the layer is composited. */
+.vortex-blend-screen {
+  mix-blend-mode: screen;
+  transform: translateZ(0);
+}
+
+/* —— Knowledge Decay: organic SVG displacement (feTurbulence → feDisplacementMap) —— */
+
+.decay-text {
+  display: inline-block;
+  overflow: visible;
+}
+
+.decay-tier-low {
+  -webkit-filter: none;
+  filter: none;
+}
+
+.decay-tier-medium {
+  -webkit-filter: url(#decay-distort-medium);
+  filter: url(#decay-distort-medium);
+}
+
+.decay-tier-high {
+  -webkit-filter: url(#decay-distort-high);
+  filter: url(#decay-distort-high);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .decay-tier-medium {
+    -webkit-filter: url(#decay-distort-medium-static);
+    filter: url(#decay-distort-medium-static);
+  }
+
+  .decay-tier-high {
+    -webkit-filter: url(#decay-distort-high-static);
+    filter: url(#decay-distort-high-static);
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--color-foreground);
+    -webkit-font-smoothing: antialiased;
+  }
+}
