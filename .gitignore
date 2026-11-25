@@ -40,3 +40,12 @@ coverage
 *.njsproj
 *.sln
 *.sw?
+
+# Local editor / AI-agent configuration (kept on disk, not versioned)
+CLAUDE.md
+AGENTS.md
+.claude/
+.mcp.json
+.cursor/
+.agents/
+skills-lock.json
